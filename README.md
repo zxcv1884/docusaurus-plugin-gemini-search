@@ -136,8 +136,7 @@ The Docusaurus page template is optional. The main integration surface is the AP
 
 ```ts
 createGeminiSearchVercelHandler({
-  apiKey: process.env.GEMINI_API_KEY,
-  fileSearchStoreName: process.env.GEMINI_FILE_SEARCH_STORE_NAME,
+  // Optional overrides. By default, the handler reads the required env vars above.
   model: 'gemini-3.1-flash-lite',
   siteUrl: 'https://docs.example.com',
   allowedOrigins: ['https://docs.example.com'],
@@ -155,14 +154,6 @@ createGeminiSearchVercelHandler({
     console.error(error);
   },
 });
-```
-
-### Environment Variables
-
-```env
-GEMINI_API_KEY=
-GEMINI_FILE_SEARCH_STORE_NAME=fileSearchStores/...
-GEMINI_SEARCH_SITE_URL=https://docs.example.com
 ```
 
 ### Package Entrypoints
