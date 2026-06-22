@@ -111,7 +111,7 @@ export function createGeminiSearchVercelHandler(options: GeminiSearchHandlerOpti
       return sendAccessDenied(res, access);
     }
 
-    const apiKey = options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    const apiKey = options.apiKey || process.env.GEMINI_API_KEY || '';
     const fileSearchStoreName = options.fileSearchStoreName || process.env.GEMINI_FILE_SEARCH_STORE_NAME || '';
 
     if (!apiKey || !fileSearchStoreName) {
@@ -126,11 +126,11 @@ export function createGeminiSearchVercelHandler(options: GeminiSearchHandlerOpti
       const {GoogleGenAI} = await import('@google/genai');
       const ai = new GoogleGenAI({apiKey});
       const response = await ai.models.generateContent({
-        model: options.model || process.env.GEMINI_SEARCH_MODEL || DEFAULT_MODEL,
+        model: options.model || DEFAULT_MODEL,
         contents: [{role: 'user', parts: [{text: question}]}],
         config: {
           temperature: 0,
-          maxOutputTokens: getPositiveInt(process.env.GEMINI_SEARCH_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
+          maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
           systemInstruction: resolveSystemInstruction(options),
           tools: [
             {
@@ -213,7 +213,6 @@ function isAllowedOrigin(req: any, options: GeminiSearchHandlerOptions) {
 
   const allowed = [
     ...(options.allowedOrigins || []),
-    ...parseCsv(process.env.GEMINI_SEARCH_ALLOWED_ORIGINS),
     getRequestOrigin(req),
   ].filter(Boolean);
 
@@ -258,8 +257,6 @@ function resolveSystemInstruction(options: GeminiSearchHandlerOptions) {
   return (
     options.prompt
     || options.systemInstruction
-    || process.env.GEMINI_SEARCH_PROMPT
-    || process.env.GEMINI_SEARCH_SYSTEM_INSTRUCTION
     || getDefaultSystemInstruction()
   );
 }
@@ -376,9 +373,4 @@ function normalizeUrl(value: string, siteUrl: string) {
     return `${siteUrl.replace(/\/$/, '')}${value}`;
   }
   return value;
-}
-
-function getPositiveInt(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }

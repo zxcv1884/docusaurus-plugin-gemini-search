@@ -163,10 +163,6 @@ createGeminiSearchVercelHandler({
 GEMINI_API_KEY=
 GEMINI_FILE_SEARCH_STORE_NAME=fileSearchStores/...
 GEMINI_SEARCH_SITE_URL=https://docs.example.com
-GEMINI_SEARCH_MODEL=gemini-3.1-flash-lite
-GEMINI_SEARCH_PROMPT=
-GEMINI_SEARCH_ALLOWED_ORIGINS=https://docs.example.com
-GEMINI_SEARCH_MAX_OUTPUT_TOKENS=1200
 ```
 
 ### Package Entrypoints

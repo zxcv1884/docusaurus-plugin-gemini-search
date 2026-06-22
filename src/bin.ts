@@ -36,9 +36,9 @@ Commands:
 
 function printDoctor() {
   const checks = [
-    ['GEMINI_API_KEY or GOOGLE_API_KEY', Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)],
+    ['GEMINI_API_KEY', Boolean(process.env.GEMINI_API_KEY)],
     ['GEMINI_FILE_SEARCH_STORE_NAME', Boolean(process.env.GEMINI_FILE_SEARCH_STORE_NAME)],
-    ['GEMINI_SEARCH_SITE_URL or SITE_URL', Boolean(process.env.GEMINI_SEARCH_SITE_URL || process.env.SITE_URL)],
+    ['GEMINI_SEARCH_SITE_URL', Boolean(process.env.GEMINI_SEARCH_SITE_URL)],
   ];
 
   for (const [label, ok] of checks) {

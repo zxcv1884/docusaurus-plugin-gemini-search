@@ -27,11 +27,11 @@ type SyncDocument = {
 export async function syncGeminiSearch(options: SyncOptions = {}) {
   const rootDir = options.rootDir || process.cwd();
   const docsDir = path.resolve(rootDir, options.docsDir || 'docs');
-  const apiKey = options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-  const siteUrl = (options.siteUrl || process.env.GEMINI_SEARCH_SITE_URL || process.env.SITE_URL || '').replace(/\/$/, '');
+  const apiKey = options.apiKey || process.env.GEMINI_API_KEY || '';
+  const siteUrl = (options.siteUrl || process.env.GEMINI_SEARCH_SITE_URL || '').replace(/\/$/, '');
 
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY or GOOGLE_API_KEY is required.');
+    throw new Error('GEMINI_API_KEY is required.');
   }
 
   const ai = new GoogleGenAI({apiKey});
@@ -39,7 +39,7 @@ export async function syncGeminiSearch(options: SyncOptions = {}) {
   if (options.createStore) {
     const store = await ai.fileSearchStores.create({
       config: {
-        displayName: process.env.GEMINI_SEARCH_STORE_DISPLAY_NAME || 'Docusaurus Gemini Search',
+        displayName: 'Docusaurus Gemini Search',
       },
     });
     console.log(`Created Gemini File Search store: ${store.name}`);
@@ -197,4 +197,3 @@ function buildDocUrl(siteUrl: string, relativePath: string) {
   const pathname = `/docs/${slug}`.replace(/\/$/, '');
   return siteUrl ? `${siteUrl}${pathname}` : pathname;
 }
-

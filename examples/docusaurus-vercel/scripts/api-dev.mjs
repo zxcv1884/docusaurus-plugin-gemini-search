@@ -9,14 +9,14 @@ import {createGeminiSearchVercelHandler} from 'docusaurus-plugin-gemini-search/s
 loadEnvFile('.env');
 loadEnvFile('.env.local');
 
-const host = process.env.GEMINI_SEARCH_API_HOST || '127.0.0.1';
-const port = Number(process.env.GEMINI_SEARCH_API_PORT || 3021);
-const apiPath = process.env.GEMINI_SEARCH_API_ROUTE || '/api/gemini-search';
-const allowedOrigins = parseCsv(process.env.GEMINI_SEARCH_ALLOWED_ORIGINS || 'http://127.0.0.1:3020');
+const host = '127.0.0.1';
+const port = 3021;
+const apiPath = '/api/gemini-search';
+const allowedOrigins = ['http://127.0.0.1:3020'];
 
 const handler = createGeminiSearchVercelHandler({
   allowedOrigins,
-  prompt: process.env.GEMINI_SEARCH_PROMPT || [
+  prompt: [
     'You are a strict documentation question-answering assistant.',
     'Use only the retrieved documentation to answer.',
     'If the documentation does not contain enough information, say that clearly.',
@@ -80,13 +80,6 @@ function setCorsHeaders(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
-function parseCsv(value) {
-  return value
-    .split(',')
-    .map((item) => item.trim().replace(/\/$/, ''))
-    .filter(Boolean);
-}
-
 function loadEnvFile(filename) {
   const filepath = path.join(process.cwd(), filename);
   if (!fs.existsSync(filepath)) {
@@ -105,4 +98,3 @@ function loadEnvFile(filename) {
     }
   }
 }
-
