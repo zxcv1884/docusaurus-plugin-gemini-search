@@ -138,6 +138,17 @@ The sync command reads `docs/**/*.md` and `docs/**/*.mdx`, adds source metadata,
 npx gemini-search doctor
 ```
 
+## Run the example
+
+```bash
+npm run build
+cd examples/docusaurus-vercel
+npm install
+npm start
+```
+
+Open `http://127.0.0.1:3020/ask-ai`.
+
 ## Production notes
 
 This package keeps the first deployment path intentionally narrow:

@@ -3,4 +3,5 @@ dist/
 .gemini-search/
 .env
 .env.local
-
+examples/**/.docusaurus/
+examples/**/build/

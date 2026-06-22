@@ -1,0 +1,27 @@
+{
+  "name": "gemini-search-docusaurus-vercel-example",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "start": "docusaurus start --host 127.0.0.1 --port 3020",
+    "build": "docusaurus build",
+    "sync": "gemini-search sync --dry-run"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.9.2",
+    "@docusaurus/preset-classic": "3.9.2",
+    "docusaurus-plugin-gemini-search": "file:../..",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@docusaurus/types": "3.9.2",
+    "typescript": "^5.6.2"
+  },
+  "overrides": {
+    "webpack": "5.99.9"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

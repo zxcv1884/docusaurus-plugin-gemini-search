@@ -1,6 +1,5 @@
 import type {FormEvent} from 'react';
 import {useMemo, useState} from 'react';
-import Layout from '@theme/Layout';
 import {Lexer, type Token, type Tokens} from 'marked';
 
 export type GeminiSearchClientConfig = {
@@ -16,7 +15,7 @@ export type GeminiSearchClientConfig = {
   turnstileAction?: string;
 };
 
-export type GeminiSearchPageProps = {
+export type GeminiSearchPanelProps = {
   config: GeminiSearchClientConfig;
 };
 
@@ -41,7 +40,7 @@ type Message = {
   isError?: boolean;
 };
 
-export default function GeminiSearchPage({config}: GeminiSearchPageProps) {
+export default function GeminiSearchPanel({config}: GeminiSearchPanelProps) {
   const [conversationId, setConversationId] = useState(createConversationId);
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -101,61 +100,59 @@ export default function GeminiSearchPage({config}: GeminiSearchPageProps) {
   }
 
   return (
-    <Layout title={config.title} description={config.subtitle} noFooter>
-      <main className="gemini-search-page">
-        <section className="gemini-search-shell">
-          <header className="gemini-search-header">
-            <div>
-              <h1>{config.title}</h1>
-              <p>{config.subtitle}</p>
-            </div>
-            {hasMessages ? (
-              <button type="button" className="gemini-search-secondary-button" onClick={startNewConversation}>
-                New chat
-              </button>
-            ) : null}
-          </header>
-
-          {!hasMessages ? (
-            <SuggestionGrid suggestions={config.suggestions} onSelect={(value) => ask(undefined, value)} />
-          ) : null}
-
-          <div className="gemini-search-messages" aria-live="polite">
-            {messages.map((message) => (
-              <article
-                key={message.id}
-                className={`gemini-search-message gemini-search-message-${message.role}${message.isError ? ' is-error' : ''}`}
-              >
-                <div className="gemini-search-message-label">
-                  {message.role === 'user' ? 'You' : 'AI'}
-                </div>
-                <MarkdownContent content={message.content} />
-                {message.citations?.length ? <CitationList citations={message.citations} /> : null}
-              </article>
-            ))}
-            {isLoading ? (
-              <article className="gemini-search-message gemini-search-message-assistant">
-                <div className="gemini-search-message-label">AI</div>
-                <p>Searching the docs...</p>
-              </article>
-            ) : null}
+    <main className="gemini-search-page">
+      <section className="gemini-search-shell">
+        <header className="gemini-search-header">
+          <div>
+            <h1>{config.title}</h1>
+            <p>{config.subtitle}</p>
           </div>
-
-          <form className="gemini-search-form" onSubmit={ask}>
-            <textarea
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder={config.placeholder}
-              rows={3}
-              maxLength={1200}
-            />
-            <button type="submit" disabled={!question.trim() || isLoading}>
-              Ask
+          {hasMessages ? (
+            <button type="button" className="gemini-search-secondary-button" onClick={startNewConversation}>
+              New chat
             </button>
-          </form>
-        </section>
-      </main>
-    </Layout>
+          ) : null}
+        </header>
+
+        {!hasMessages ? (
+          <SuggestionGrid suggestions={config.suggestions} onSelect={(value) => ask(undefined, value)} />
+        ) : null}
+
+        <div className="gemini-search-messages" aria-live="polite">
+          {messages.map((message) => (
+            <article
+              key={message.id}
+              className={`gemini-search-message gemini-search-message-${message.role}${message.isError ? ' is-error' : ''}`}
+            >
+              <div className="gemini-search-message-label">
+                {message.role === 'user' ? 'You' : 'AI'}
+              </div>
+              <MarkdownContent content={message.content} />
+              {message.citations?.length ? <CitationList citations={message.citations} /> : null}
+            </article>
+          ))}
+          {isLoading ? (
+            <article className="gemini-search-message gemini-search-message-assistant">
+              <div className="gemini-search-message-label">AI</div>
+              <p>Searching the docs...</p>
+            </article>
+          ) : null}
+        </div>
+
+        <form className="gemini-search-form" onSubmit={ask}>
+          <textarea
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder={config.placeholder}
+            rows={3}
+            maxLength={1200}
+          />
+          <button type="submit" disabled={!question.trim() || isLoading}>
+            Ask
+          </button>
+        </form>
+      </section>
+    </main>
   );
 }
 
@@ -273,4 +270,3 @@ function createConversationId() {
   const random = Math.random().toString(36).slice(2, 12);
   return `gs-${Date.now().toString(36)}-${random}`;
 }
-
