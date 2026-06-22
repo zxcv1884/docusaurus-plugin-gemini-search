@@ -13,7 +13,8 @@
     "@docusaurus/preset-classic": "3.9.2",
     "docusaurus-plugin-gemini-search": "file:../..",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "marked": "^16.2.1"
   },
   "devDependencies": {
     "@docusaurus/types": "3.9.2",

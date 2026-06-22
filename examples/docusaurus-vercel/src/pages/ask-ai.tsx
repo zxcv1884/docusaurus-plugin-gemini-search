@@ -1,23 +1,8 @@
 import type {FormEvent} from 'react';
 import {useMemo, useState} from 'react';
+import Layout from '@theme/Layout';
 import {Lexer, type Token, type Tokens} from 'marked';
-
-export type GeminiSearchClientConfig = {
-  apiPath: string;
-  title: string;
-  subtitle: string;
-  placeholder: string;
-  suggestions: Array<{
-    label?: string;
-    question: string;
-  }>;
-  turnstileSiteKey?: string;
-  turnstileAction?: string;
-};
-
-export type GeminiSearchPanelProps = {
-  config: GeminiSearchClientConfig;
-};
+import styles from './ask-ai.module.css';
 
 type Citation = {
   title: string;
@@ -40,7 +25,15 @@ type Message = {
   isError?: boolean;
 };
 
-export default function GeminiSearchPanel({config}: GeminiSearchPanelProps) {
+const apiPath = 'http://127.0.0.1:3021/api/gemini-search';
+const suggestions = [
+  {
+    label: 'Docs',
+    question: 'What can I find in these docs?',
+  },
+];
+
+export default function AskAiPage() {
   const [conversationId, setConversationId] = useState(createConversationId);
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -54,18 +47,19 @@ export default function GeminiSearchPanel({config}: GeminiSearchPanelProps) {
       return;
     }
 
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: trimmedQuestion,
-    };
-
-    setMessages((current) => [...current, userMessage]);
+    setMessages((current) => [
+      ...current,
+      {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: trimmedQuestion,
+      },
+    ]);
     setQuestion('');
     setIsLoading(true);
 
     try {
-      const response = await requestAnswer(config.apiPath, conversationId, trimmedQuestion);
+      const response = await requestAnswer(conversationId, trimmedQuestion);
       setMessages((current) => [
         ...current,
         {
@@ -100,83 +94,71 @@ export default function GeminiSearchPanel({config}: GeminiSearchPanelProps) {
   }
 
   return (
-    <main className="gemini-search-page">
-      <section className="gemini-search-shell">
-        <header className="gemini-search-header">
-          <div>
-            <h1>{config.title}</h1>
-            <p>{config.subtitle}</p>
+    <Layout title="Ask AI" description="Ask this documentation a question." noFooter>
+      <main className={styles.page}>
+        <section className={styles.shell}>
+          <header className={styles.header}>
+            <div>
+              <h1>Ask AI</h1>
+              <p>Ask this documentation a question.</p>
+            </div>
+            {hasMessages ? (
+              <button type="button" className={styles.secondaryButton} onClick={startNewConversation}>
+                New chat
+              </button>
+            ) : null}
+          </header>
+
+          {!hasMessages ? <SuggestionGrid onSelect={(value) => ask(undefined, value)} /> : null}
+
+          <div className={styles.messages} aria-live="polite">
+            {messages.map((message) => (
+              <article
+                key={message.id}
+                className={[styles.message, message.role === 'user' ? styles.userMessage : styles.assistantMessage, message.isError ? styles.errorMessage : ''].filter(Boolean).join(' ')}
+              >
+                <div className={styles.messageLabel}>{message.role === 'user' ? 'You' : 'AI'}</div>
+                <MarkdownContent content={message.content} />
+                {message.citations?.length ? <CitationList citations={message.citations} /> : null}
+              </article>
+            ))}
+            {isLoading ? (
+              <article className={[styles.message, styles.assistantMessage].join(' ')}>
+                <div className={styles.messageLabel}>AI</div>
+                <p>Searching the docs...</p>
+              </article>
+            ) : null}
           </div>
-          {hasMessages ? (
-            <button type="button" className="gemini-search-secondary-button" onClick={startNewConversation}>
-              New chat
+
+          <form className={styles.form} onSubmit={ask}>
+            <textarea
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder="Ask about these docs..."
+              rows={3}
+              maxLength={1200}
+            />
+            <button type="submit" disabled={!question.trim() || isLoading}>
+              Ask
             </button>
-          ) : null}
-        </header>
-
-        {!hasMessages ? (
-          <SuggestionGrid suggestions={config.suggestions} onSelect={(value) => ask(undefined, value)} />
-        ) : null}
-
-        <div className="gemini-search-messages" aria-live="polite">
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className={`gemini-search-message gemini-search-message-${message.role}${message.isError ? ' is-error' : ''}`}
-            >
-              <div className="gemini-search-message-label">
-                {message.role === 'user' ? 'You' : 'AI'}
-              </div>
-              <MarkdownContent content={message.content} />
-              {message.citations?.length ? <CitationList citations={message.citations} /> : null}
-            </article>
-          ))}
-          {isLoading ? (
-            <article className="gemini-search-message gemini-search-message-assistant">
-              <div className="gemini-search-message-label">AI</div>
-              <p>Searching the docs...</p>
-            </article>
-          ) : null}
-        </div>
-
-        <form className="gemini-search-form" onSubmit={ask}>
-          <textarea
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder={config.placeholder}
-            rows={3}
-            maxLength={1200}
-          />
-          <button type="submit" disabled={!question.trim() || isLoading}>
-            Ask
-          </button>
-        </form>
-      </section>
-    </main>
+          </form>
+        </section>
+      </main>
+    </Layout>
   );
 }
 
-function SuggestionGrid({
-  suggestions,
-  onSelect,
-}: {
-  suggestions: GeminiSearchClientConfig['suggestions'];
-  onSelect: (question: string) => void;
-}) {
-  if (!suggestions.length) {
-    return null;
-  }
-
+function SuggestionGrid({onSelect}: {onSelect: (question: string) => void}) {
   return (
-    <div className="gemini-search-suggestions">
+    <div className={styles.suggestions}>
       {suggestions.map((suggestion) => (
         <button
           key={suggestion.question}
           type="button"
-          className="gemini-search-suggestion"
+          className={styles.suggestion}
           onClick={() => onSelect(suggestion.question)}
         >
-          {suggestion.label ? <span>{suggestion.label}</span> : null}
+          <span>{suggestion.label}</span>
           <strong>{suggestion.question}</strong>
         </button>
       ))}
@@ -184,7 +166,7 @@ function SuggestionGrid({
   );
 }
 
-async function requestAnswer(apiPath: string, conversationId: string, question: string): Promise<ApiResponse> {
+async function requestAnswer(conversationId: string, question: string): Promise<ApiResponse> {
   const response = await fetch(apiPath, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -196,7 +178,7 @@ async function requestAnswer(apiPath: string, conversationId: string, question: 
     : {};
 
   if (response.status === 403 && data.captchaRequired) {
-    throw new Error('Verification is required. Configure Turnstile client support before enabling captcha.');
+    throw new Error('Verification is required. Add Turnstile support to this copied page before enabling captcha.');
   }
 
   if (!response.ok) {
@@ -208,7 +190,7 @@ async function requestAnswer(apiPath: string, conversationId: string, question: 
 
 function CitationList({citations}: {citations: Citation[]}) {
   return (
-    <div className="gemini-search-citations">
+    <div className={styles.citations}>
       <h2>References</h2>
       <ol>
         {citations.map((citation, index) => (
@@ -229,7 +211,7 @@ function CitationList({citations}: {citations: Citation[]}) {
 
 function MarkdownContent({content}: {content: string}) {
   const tokens = useMemo(() => Lexer.lex(content), [content]);
-  return <div className="gemini-search-markdown">{tokens.map((token, index) => renderMarkdownBlock(token, index))}</div>;
+  return <div className={styles.markdown}>{tokens.map((token, index) => renderMarkdownBlock(token, index))}</div>;
 }
 
 function renderMarkdownBlock(token: Token, key: number | string) {

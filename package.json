@@ -1,6 +1,6 @@
 {
   "name": "docusaurus-plugin-gemini-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Add a Gemini-powered AI assistant to your Docusaurus documentation.",
   "type": "module",
   "license": "MIT",
@@ -31,11 +31,6 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./client": {
-      "types": "./dist/client.d.ts",
-      "import": "./dist/client.js",
-      "default": "./dist/client.js"
-    },
     "./server": {
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js",
@@ -45,8 +40,7 @@
       "types": "./dist/sync.d.ts",
       "import": "./dist/sync.js",
       "default": "./dist/sync.js"
-    },
-    "./style.css": "./dist/style.css"
+    }
   },
   "files": [
     "bin",
@@ -55,22 +49,17 @@
     "README.md",
     "LICENSE"
   ],
-  "sideEffects": [
-    "./dist/style.css"
-  ],
   "scripts": {
-    "build": "tsc && node scripts/copy-assets.mjs",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepack": "npm run build"
   },
   "dependencies": {
-    "@google/genai": "^2.8.0",
-    "marked": "^16.2.1"
+    "@google/genai": "^2.8.0"
   },
   "peerDependencies": {
-    "@docusaurus/core": "^3.0.0",
-    "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0"
+    "@docusaurus/core": "^3.0.0"
   },
   "peerDependenciesMeta": {
     "@docusaurus/core": {
@@ -80,7 +69,6 @@
   "devDependencies": {
     "@docusaurus/types": "^3.9.2",
     "@types/node": "^24.0.0",
-    "@types/react": "^19.0.0",
     "typescript": "^5.6.2"
   },
   "engines": {
