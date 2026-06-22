@@ -8,6 +8,40 @@ This package provides:
 - an optional Docusaurus Ask AI page template
 - a CLI for creating and syncing Gemini File Search stores
 
+## Prepare Gemini
+
+You need a Gemini API key and a Gemini File Search store before the API can answer questions.
+
+Install the package in your docs project:
+
+```bash
+npm install docusaurus-plugin-gemini-search
+```
+
+Set your Gemini API key:
+
+```env
+GEMINI_API_KEY=
+```
+
+Create a Gemini File Search store:
+
+```bash
+npx gemini-search create-store
+```
+
+Copy the printed `fileSearchStores/...` value into:
+
+```env
+GEMINI_FILE_SEARCH_STORE_NAME=fileSearchStores/...
+```
+
+Set your public docs URL:
+
+```env
+GEMINI_SEARCH_SITE_URL=https://docs.example.com
+```
+
 ## Run The Example
 
 Build the package first:
@@ -59,7 +93,7 @@ The Ask AI page is only a template. You can copy it, swizzle it, or build your o
 
 ## Add To An Existing Docusaurus Site
 
-Install the package:
+Install the package if you have not already:
 
 ```bash
 npm install docusaurus-plugin-gemini-search
@@ -83,21 +117,7 @@ export default createGeminiSearchVercelHandler({
 });
 ```
 
-Set environment variables:
-
-```env
-GEMINI_API_KEY=
-GEMINI_FILE_SEARCH_STORE_NAME=fileSearchStores/...
-GEMINI_SEARCH_SITE_URL=https://docs.example.com
-```
-
-Create a Gemini File Search store:
-
-```bash
-npx gemini-search create-store
-```
-
-Copy the printed `fileSearchStores/...` value into `GEMINI_FILE_SEARCH_STORE_NAME`.
+Use the three environment variables from `Prepare Gemini` in your deployment.
 
 Sync your docs:
 
