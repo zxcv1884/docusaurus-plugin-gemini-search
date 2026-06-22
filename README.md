@@ -144,6 +144,14 @@ npx gemini-search doctor
 npm run build
 cd examples/docusaurus-vercel
 npm install
+cp .env.example .env.local
+npm run api
+```
+
+In another terminal:
+
+```bash
+cd examples/docusaurus-vercel
 npm start
 ```
 

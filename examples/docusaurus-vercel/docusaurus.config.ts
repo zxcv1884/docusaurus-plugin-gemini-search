@@ -34,7 +34,7 @@ const config: Config = {
       'docusaurus-plugin-gemini-search',
       {
         routePath: '/ask-ai',
-        apiPath: '/api/gemini-search',
+        apiPath: process.env.GEMINI_SEARCH_API_PATH || 'http://127.0.0.1:3021/api/gemini-search',
         title: 'Ask AI',
         subtitle: 'Ask this documentation a question.',
         suggestions: [
