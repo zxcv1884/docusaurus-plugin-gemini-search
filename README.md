@@ -65,26 +65,8 @@ Install the package:
 npm install docusaurus-plugin-gemini-search
 ```
 
-Add the Docusaurus plugin:
-
-```ts
-// docusaurus.config.ts
-const config = {
-  plugins: [
-    [
-      'docusaurus-plugin-gemini-search',
-      {
-        routePath: '/ask-ai',
-        apiPath: '/api/gemini-search',
-        title: 'Ask AI',
-        subtitle: 'Ask a question about this documentation.',
-      },
-    ],
-  ],
-};
-
-export default config;
-```
+Installing the package does not automatically create `/api/gemini-search`.
+Add the route file below to your site. On Vercel, this file becomes the API function.
 
 Add the Vercel API route:
 
@@ -125,6 +107,22 @@ npx gemini-search sync
 ```
 
 Deploy your Docusaurus site and `api/gemini-search.ts` route to Vercel.
+For local API testing, use `vercel dev` or a small local server like the one in `examples/docusaurus-vercel`.
+
+Your existing UI can now call:
+
+```text
+POST /api/gemini-search
+```
+
+with:
+
+```json
+{
+  "conversationId": "your-conversation-id",
+  "question": "How do I install this?"
+}
+```
 
 ## Notes
 
@@ -133,27 +131,6 @@ The API runs stateless by default. Public deployments should add rate limiting b
 The Docusaurus page template is optional. The main integration surface is the API handler.
 
 ## Options Reference
-
-### Docusaurus Plugin Options
-
-```ts
-[
-  'docusaurus-plugin-gemini-search',
-  {
-    routePath: '/ask-ai',
-    apiPath: '/api/gemini-search',
-    title: 'Ask AI',
-    subtitle: 'Ask a question about this documentation.',
-    placeholder: 'Ask about these docs...',
-    suggestions: [
-      {
-        label: 'Getting started',
-        question: 'How do I install and configure this project?',
-      },
-    ],
-  },
-]
-```
 
 ### Server Handler Options
 
