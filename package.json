@@ -1,0 +1,84 @@
+{
+  "name": "docusaurus-plugin-gemini-search",
+  "version": "0.1.0",
+  "description": "Add a Gemini-powered AI assistant to your Docusaurus documentation.",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "docusaurus",
+    "docusaurus-plugin",
+    "gemini",
+    "gemini-file-search",
+    "docs",
+    "ai",
+    "rag"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/gemini-search.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/gemini-search/issues"
+  },
+  "bin": {
+    "gemini-search": "./bin/gemini-search.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./sync": {
+      "types": "./dist/sync.d.ts",
+      "import": "./dist/sync.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "bin",
+    "dist",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "./dist/style.css"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "marked": "^16.2.1"
+  },
+  "peerDependencies": {
+    "@docusaurus/core": "^3.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@docusaurus/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@docusaurus/types": "^3.9.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
