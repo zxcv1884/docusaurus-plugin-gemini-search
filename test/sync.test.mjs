@@ -158,6 +158,7 @@ test('syncGeminiSearch skips unchanged documents using store metadata', async ()
 
   await syncGeminiSearch(options);
   assert.equal(uploads.length, 2);
+  assert.deepEqual(await fs.readdir(path.join(rootDir, '.gemini-search')), []);
 
   await syncGeminiSearch(options);
   assert.equal(uploads.length, 2);

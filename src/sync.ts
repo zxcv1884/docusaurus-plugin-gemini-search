@@ -223,23 +223,27 @@ async function walkMarkdownFiles(dir: string): Promise<string[]> {
 
 async function uploadDocument(ai: GeminiSyncClient, rootDir: string, storeName: string, doc: SyncDocument) {
   const uploadPath = await writeUploadFile(rootDir, doc);
-  const operation = await ai.fileSearchStores.uploadToFileSearchStore({
-    fileSearchStoreName: storeName,
-    file: uploadPath,
-    config: {
-      mimeType: 'text/markdown',
-      displayName: doc.title,
-      customMetadata: [
-        {key: 'sourcePath', stringValue: doc.sourcePath},
-        {key: 'url', stringValue: doc.url},
-        {key: 'title', stringValue: doc.title},
-        {key: 'displayName', stringValue: doc.title},
-        {key: 'section', stringValue: doc.section},
-        {key: 'contentHash', stringValue: doc.contentHash},
-      ],
-    },
-  });
-  await waitForOperation(ai, operation);
+  try {
+    const operation = await ai.fileSearchStores.uploadToFileSearchStore({
+      fileSearchStoreName: storeName,
+      file: uploadPath,
+      config: {
+        mimeType: 'text/markdown',
+        displayName: doc.title,
+        customMetadata: [
+          {key: 'sourcePath', stringValue: doc.sourcePath},
+          {key: 'url', stringValue: doc.url},
+          {key: 'title', stringValue: doc.title},
+          {key: 'displayName', stringValue: doc.title},
+          {key: 'section', stringValue: doc.section},
+          {key: 'contentHash', stringValue: doc.contentHash},
+        ],
+      },
+    });
+    await waitForOperation(ai, operation);
+  } finally {
+    await fs.rm(uploadPath, {force: true});
+  }
 }
 
 async function uploadDocuments(

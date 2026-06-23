@@ -40,7 +40,7 @@ npx gemini-search sync
 npx gemini-search sync --concurrency 6
 ```
 
-Sync reads each document's `sourcePath` and `contentHash` metadata from the configured Gemini File Search store, skips active documents whose hashes already match, uploads changed documents, and removes stale remote copies. The local `.gemini-search` directory is only used for temporary upload files.
+Sync reads each document's `sourcePath` and `contentHash` metadata from the configured Gemini File Search store, skips active documents whose hashes already match, uploads changed documents, and removes stale remote copies. The local `.gemini-search` directory is only used for temporary upload files that are removed after upload.
 
 Uploaded markdown includes a compact hidden context block with the document title, section, source path, URL, and frontmatter description when present.
 
