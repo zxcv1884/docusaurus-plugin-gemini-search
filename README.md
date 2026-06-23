@@ -44,6 +44,15 @@ Sync reads each document's `sourcePath` and `contentHash` metadata from the conf
 
 Uploaded markdown includes a compact hidden context block with the document title, section, source path, URL, and frontmatter description when present.
 
+Preview a built Docusaurus site locally:
+
+```bash
+npm run build
+npx gemini-search preview --api-path /api/gemini-search --site-dir build --port 3021
+```
+
+The preview server serves the static Docusaurus `build/` directory, mounts the Gemini Search Fetch handler at the configured API path, loads `.env` and `.env.local`, and prints the local URL. It does not sync docs, create stores, or change remote Gemini File Search data.
+
 ## Quick Start
 
 Create a Fetch handler in your server runtime:
@@ -140,11 +149,11 @@ npm run build
 cd examples/docusaurus
 npm install
 cp .env.example .env.local
-npm run api   # starts the API at http://127.0.0.1:3021/api/gemini-search
-npm start     # in another terminal — opens http://127.0.0.1:3020/ask-ai
+npm run build
+npm run preview   # opens http://127.0.0.1:3021/ask-ai with the API mounted
 ```
 
-The package does not ship a UI component. If you want a starter page, copy `ask-ai.tsx` and `ask-ai.module.css` from the example into your own project and update `apiPath` to your deployed route.
+The package does not ship a UI component. If you want a starter page, copy `ask-ai.tsx` and `ask-ai.module.css` from the example into your own project and keep your API route mounted at `/api/gemini-search`, or update `apiPath` to your deployed route.
 
 ## Options Reference
 
@@ -199,6 +208,18 @@ npx gemini-search sync --concurrency 6
 Uploads run with concurrency 4 by default. Use `--concurrency <n>` or `GEMINI_SEARCH_SYNC_CONCURRENCY` to tune it; values are clamped from 1 to 8.
 
 Use a different Gemini File Search store, or delete stale documents from the store, if you need to force a full re-upload.
+
+### Preview CLI Options
+
+```bash
+npx gemini-search preview
+npx gemini-search preview --api-path /api/gemini-search --site-dir build --port 3021
+npx gemini-search preview --allowed-origin http://127.0.0.1:3020
+```
+
+`preview` is a local development helper. It serves static files from `--site-dir`, mounts the package Fetch handler at `--api-path`, and reads `.env` followed by `.env.local` from the current working directory. `.env.local` values override matching `.env` values, while environment variables already set in the shell are preserved.
+
+It intentionally does not replace a production API wrapper. Keep project-specific concerns such as rate limiting, Turnstile, origin policy, tenant checks, Redis persistence, or custom citation cleanup in your own server route, usually by wrapping `/fetch` or `/core`.
 
 ### Docusaurus Plugin Options
 

@@ -26,7 +26,7 @@ type Message = {
   isError?: boolean;
 };
 
-const apiPath = 'http://127.0.0.1:3021/api/gemini-search';
+const apiPath = '/api/gemini-search';
 const suggestions = [
   {
     label: 'Docs',

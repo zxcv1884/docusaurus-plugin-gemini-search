@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "api": "node scripts/api-dev.mjs",
     "start": "docusaurus start --host 127.0.0.1 --port 3020",
     "build": "docusaurus build",
+    "preview": "gemini-search preview --api-path /api/gemini-search --site-dir build --port 3021",
     "sync": "gemini-search sync --dry-run"
   },
   "dependencies": {

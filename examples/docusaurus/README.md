@@ -5,7 +5,7 @@ This example shows two things:
 1. how to run the Gemini Search API with the Fetch handler
 2. how an optional Docusaurus Ask AI page can call that API
 
-## Run The API
+## Run The Preview
 
 From the repository root:
 
@@ -14,37 +14,29 @@ npm run build
 cd examples/docusaurus
 npm install
 cp .env.example .env.local
-npm run api
+npm run build
+npm run preview
 ```
 
-The API runs at:
+The preview runs at:
+
+```text
+http://127.0.0.1:3021/ask-ai
+```
+
+The API route is mounted at:
 
 ```text
 http://127.0.0.1:3021/api/gemini-search
 ```
 
-Without Gemini credentials, it returns:
+Without Gemini credentials, that API route returns:
 
 ```json
 {"error":"Gemini Search is not configured"}
 ```
 
 That is expected and means the API route is running.
-
-## Open The Optional Page Template
-
-In another terminal:
-
-```bash
-cd examples/docusaurus
-npm start
-```
-
-Open:
-
-```text
-http://127.0.0.1:3020/ask-ai
-```
 
 The page is only a template. Customers can copy it, swizzle it, or build their own UI against the API.
 

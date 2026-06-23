@@ -1,4 +1,5 @@
 import process from 'node:process';
+import {startGeminiSearchPreview} from './preview.js';
 import {syncGeminiSearch, type SyncSource} from './sync.js';
 
 export type ParsedArgs = {
@@ -70,6 +71,14 @@ export async function runCli(argv = process.argv.slice(2)) {
     });
   } else if (command === 'create-store') {
     await syncGeminiSearch({createStore: true});
+  } else if (command === 'preview') {
+    await startGeminiSearchPreview({
+      apiPath: getArgValue(args, '--api-path'),
+      siteDir: getArgValue(args, '--site-dir'),
+      host: getArgValue(args, '--host'),
+      port: parsePositiveInteger(getArgValue(args, '--port')),
+      allowedOrigins: args.values.get('--allowed-origin'),
+    });
   } else if (command === 'doctor') {
     printDoctor();
   } else {
@@ -90,6 +99,12 @@ Commands:
     --store-name <name>               Store name override
     --concurrency <n>                 Parallel uploads, clamped to 1-8 (default: 4)
   gemini-search create-store          Create a Gemini File Search store
+  gemini-search preview [options]     Serve a Docusaurus build with the Gemini Search API
+    --api-path <path>                 API route path (default: /api/gemini-search)
+    --site-dir <path>                 Docusaurus build directory (default: build)
+    --host <host>                     Hostname to bind (default: 127.0.0.1)
+    --port <n>                        Port to bind (default: 3021)
+    --allowed-origin <origin>         Extra CORS origin; repeatable
   gemini-search doctor                Check required environment variables
 `;
 }
