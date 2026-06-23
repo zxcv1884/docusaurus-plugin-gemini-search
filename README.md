@@ -37,9 +37,12 @@ Sync your docs:
 ```bash
 npx gemini-search sync --dry-run
 npx gemini-search sync
+npx gemini-search sync --concurrency 6
 ```
 
-Sync keeps a local `.gemini-search/manifest.json` and skips unchanged documents on later runs.
+Sync reads each document's `sourcePath` and `contentHash` metadata from the configured Gemini File Search store, skips active documents whose hashes already match, uploads changed documents, and removes stale remote copies. The local `.gemini-search` directory is only used for temporary upload files.
+
+Uploaded markdown includes a compact hidden context block with the document title, section, source path, URL, and frontmatter description when present.
 
 ## Quick Start
 
@@ -188,11 +191,14 @@ createGeminiSearchFetchHandler({
 npx gemini-search sync --dry-run
 npx gemini-search sync --docs-dir docs --base-pathname /docs
 npx gemini-search sync --source docs,/docs --source blog,/blog
+npx gemini-search sync --concurrency 6
 ```
 
 `--source` can be repeated and uses `<dir>,<basePathname>[,<section>]`. When `--source` is present, it takes precedence over `--docs-dir`.
 
-Delete `.gemini-search/manifest.json` to force a full re-upload.
+Uploads run with concurrency 4 by default. Use `--concurrency <n>` or `GEMINI_SEARCH_SYNC_CONCURRENCY` to tune it; values are clamped from 1 to 8.
+
+Use a different Gemini File Search store, or delete stale documents from the store, if you need to force a full re-upload.
 
 ### Docusaurus Plugin Options
 

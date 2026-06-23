@@ -60,4 +60,5 @@ test('help text documents source precedence and sync options', () => {
   assert.match(help, /--base-pathname <path>/);
   assert.match(help, /--source <dir>,<base>\[,<section>\]/);
   assert.match(help, /overrides --docs-dir/);
+  assert.match(help, /--concurrency <n>/);
 });

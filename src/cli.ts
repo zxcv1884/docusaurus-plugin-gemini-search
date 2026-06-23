@@ -66,6 +66,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       sources: parseSyncSources(args.values.get('--source')),
       siteUrl: getArgValue(args, '--site-url'),
       storeName: getArgValue(args, '--store-name'),
+      concurrency: parsePositiveInteger(getArgValue(args, '--concurrency')),
     });
   } else if (command === 'create-store') {
     await syncGeminiSearch({createStore: true});
@@ -87,9 +88,19 @@ Commands:
     --source <dir>,<base>[,<section>] Docs source; repeatable; overrides --docs-dir
     --site-url <url>                  Site URL override
     --store-name <name>               Store name override
+    --concurrency <n>                 Parallel uploads, clamped to 1-8 (default: 4)
   gemini-search create-store          Create a Gemini File Search store
   gemini-search doctor                Check required environment variables
 `;
+}
+
+function parsePositiveInteger(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
 export function printHelp() {

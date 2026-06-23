@@ -5,7 +5,8 @@ import process from 'node:process';
 import {GoogleGenAI} from '@google/genai';
 
 const CACHE_DIR = '.gemini-search';
-const MANIFEST_FILENAME = 'manifest.json';
+const DEFAULT_SYNC_CONCURRENCY = 4;
+const MAX_SYNC_CONCURRENCY = 8;
 
 export type SyncOptions = {
   rootDir?: string;
@@ -15,6 +16,7 @@ export type SyncOptions = {
   siteUrl?: string;
   storeName?: string;
   apiKey?: string;
+  concurrency?: number;
   dryRun?: boolean;
   createStore?: boolean;
   client?: GeminiSyncClient;
@@ -46,6 +48,10 @@ export type SyncDocument = {
 export type GeminiSyncClient = {
   fileSearchStores: {
     create(input: unknown): Promise<{name?: string}>;
+    documents: {
+      list(input: unknown): AsyncIterable<GeminiStoreDocument> | Promise<AsyncIterable<GeminiStoreDocument> | GeminiStoreDocument[]>;
+      delete(input: unknown): Promise<unknown>;
+    };
     uploadToFileSearchStore(input: unknown): Promise<unknown>;
   };
   operations: {
@@ -53,14 +59,38 @@ export type GeminiSyncClient = {
   };
 };
 
-export type SyncManifest = {
-  version: 1;
-  documents: Record<string, {
-    contentHash: string;
-    url: string;
-    title: string;
-    section: string;
-  }>;
+export type GeminiStoreDocument = {
+  name?: string;
+  displayName?: string;
+  state?: string;
+  customMetadata?: GeminiMetadataEntry[];
+  custom_metadata?: GeminiMetadataEntry[];
+};
+
+export type GeminiMetadataEntry = {
+  key?: string;
+  stringValue?: string;
+  string_value?: string;
+};
+
+type ListedStoreDocument = GeminiStoreDocument & {
+  name: string;
+  sourcePath: string;
+  contentHash: string;
+};
+
+type PlannedDelete = {
+  name: string;
+  sourcePath: string;
+  reason: 'changed-hash' | 'duplicate' | 'failed' | 'removed-local-doc' | 'stale-hash';
+};
+
+type IncrementalSyncPlan = {
+  existingDocumentsCount: number;
+  missingMetadata: GeminiStoreDocument[];
+  skipped: SyncDocument[];
+  toDelete: PlannedDelete[];
+  toUpload: SyncDocument[];
 };
 
 export async function syncGeminiSearch(options: SyncOptions = {}) {
@@ -85,36 +115,35 @@ export async function syncGeminiSearch(options: SyncOptions = {}) {
 
   const sources = resolveSyncSources(rootDir, options);
   const docs = await collectDocs(rootDir, sources, siteUrl);
-  const manifestPath = getManifestPath(rootDir);
-  const previousManifest = await readManifest(manifestPath);
-  const changedDocs = docs.filter((doc) => previousManifest.documents[doc.sourcePath]?.contentHash !== doc.contentHash);
   const storeName = options.storeName || process.env.GEMINI_FILE_SEARCH_STORE_NAME || '';
-  if (!options.dryRun && !apiKey) {
+  if (!apiKey && !options.client) {
     throw new Error('GEMINI_API_KEY is required.');
   }
-  if (!options.dryRun && !storeName.startsWith('fileSearchStores/')) {
+  if (!storeName.startsWith('fileSearchStores/')) {
     throw new Error('GEMINI_FILE_SEARCH_STORE_NAME must look like fileSearchStores/...');
   }
 
+  const ai = options.client || new GoogleGenAI({apiKey});
+  const syncPlan = await buildIncrementalSyncPlan(ai, rootDir, storeName, docs, sources);
+  printIncrementalSyncPlan(syncPlan);
+
   if (options.dryRun) {
-    const target = storeName || 'the configured Gemini File Search store';
-    console.log(`Dry run: ${changedDocs.length} changed document(s) would be uploaded to ${target}.`);
-    for (const doc of changedDocs.slice(0, 20)) {
+    console.log(`Dry run: ${syncPlan.toUpload.length} changed document(s) would be uploaded to ${storeName}.`);
+    for (const doc of syncPlan.toUpload.slice(0, 20)) {
       console.log(`${doc.sourcePath} -> ${doc.url}`);
     }
-    if (changedDocs.length > 20) {
-      console.log(`...and ${changedDocs.length - 20} more.`);
+    if (syncPlan.toUpload.length > 20) {
+      console.log(`...and ${syncPlan.toUpload.length - 20} more.`);
+    }
+    if (syncPlan.toDelete.length) {
+      console.log(`Dry run: ${syncPlan.toDelete.length} stale document(s) would be deleted.`);
     }
     return;
   }
 
-  const ai = options.client || new GoogleGenAI({apiKey});
-  console.log(`Uploading ${changedDocs.length} changed document(s) to ${storeName}.`);
-  for (const [index, doc] of changedDocs.entries()) {
-    console.log(`[${index + 1}/${changedDocs.length}] ${doc.sourcePath}`);
-    await uploadDocument(ai, rootDir, storeName, doc);
-  }
-  await writeManifest(manifestPath, createManifest(docs));
+  await uploadDocuments(ai, rootDir, storeName, syncPlan.toUpload, resolveSyncConcurrency(options.concurrency));
+
+  await deletePlannedDocuments(ai, syncPlan.toDelete);
   console.log('Gemini Search sync complete.');
 }
 
@@ -148,15 +177,17 @@ export async function collectDocs(rootDir: string, sources: ResolvedSyncSource[]
     for (const absolutePath of files) {
       const raw = await fs.readFile(absolutePath, 'utf8');
       const sourcePath = path.relative(rootDir, absolutePath).split(path.sep).join('/');
-      const title = extractTitle(raw, absolutePath);
+      const frontMatter = parseFrontMatter(raw);
+      const title = extractTitle(raw, absolutePath, frontMatter);
       const url = buildDocUrl(siteUrl, path.relative(source.absoluteDir, absolutePath), source.basePathname);
-      const indexableContent = [
-        `Title: ${title}`,
-        `URL: ${url}`,
-        `Source: ${sourcePath}`,
-        '',
-        stripFrontMatter(raw),
-      ].join('\n');
+      const indexableContent = buildIndexableMarkdown({
+        content: stripFrontMatter(raw),
+        description: frontMatter.description,
+        section: source.section,
+        sourcePath,
+        title,
+        url,
+      });
       const contentHash = createHash('sha256').update(indexableContent).digest('hex').slice(0, 16);
 
       docs.push({
@@ -211,6 +242,251 @@ async function uploadDocument(ai: GeminiSyncClient, rootDir: string, storeName: 
   await waitForOperation(ai, operation);
 }
 
+async function uploadDocuments(
+  ai: GeminiSyncClient,
+  rootDir: string,
+  storeName: string,
+  docs: SyncDocument[],
+  concurrency: number,
+) {
+  if (!docs.length) {
+    console.log(`Uploading 0 changed document(s) to ${storeName}.`);
+    return;
+  }
+
+  const workerCount = Math.min(concurrency, docs.length);
+  const failures: Array<{doc: SyncDocument; error: unknown}> = [];
+  let nextIndex = 0;
+
+  console.log(`Uploading ${docs.length} changed document(s) to ${storeName} with concurrency ${workerCount}.`);
+
+  async function worker() {
+    while (nextIndex < docs.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const doc = docs[index];
+
+      try {
+        console.log(`[${index + 1}/${docs.length}] ${doc.sourcePath}`);
+        await uploadDocument(ai, rootDir, storeName, doc);
+      } catch (error) {
+        failures.push({doc, error});
+        console.error(`[${index + 1}/${docs.length}] Failed ${doc.sourcePath}: ${formatErrorMessage(error)}`);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({length: workerCount}, () => worker()));
+
+  if (failures.length) {
+    throw new Error(`Failed to upload ${failures.length} document(s): ${failures.map((failure) => failure.doc.sourcePath).join(', ')}`);
+  }
+}
+
+function resolveSyncConcurrency(value: number | undefined) {
+  const envValue = Number(process.env.GEMINI_SEARCH_SYNC_CONCURRENCY);
+  const parsed = Number.isFinite(value) && value ? value : envValue;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SYNC_CONCURRENCY;
+  }
+
+  return Math.max(1, Math.min(Math.floor(parsed), MAX_SYNC_CONCURRENCY));
+}
+
+function formatErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function buildIncrementalSyncPlan(
+  ai: GeminiSyncClient,
+  rootDir: string,
+  storeName: string,
+  docs: SyncDocument[],
+  sources: ResolvedSyncSource[],
+): Promise<IncrementalSyncPlan> {
+  const existingDocuments = await listStoreDocuments(ai, storeName);
+  const docsBySourcePath = new Map(docs.map((doc) => [doc.sourcePath, doc]));
+  const syncedSourceDirs = sources.map((source) => (
+    path.relative(rootDir, source.absoluteDir).split(path.sep).join('/').replace(/^\/+|\/+$/g, '')
+  ));
+  const existingBySourcePath = new Map<string, ListedStoreDocument[]>();
+  const toDelete: PlannedDelete[] = [];
+  const toUpload: SyncDocument[] = [];
+  const skipped: SyncDocument[] = [];
+  const missingMetadata: GeminiStoreDocument[] = [];
+
+  for (const document of existingDocuments) {
+    if (!document.sourcePath) {
+      missingMetadata.push(document);
+      continue;
+    }
+
+    const group = existingBySourcePath.get(document.sourcePath) || [];
+    group.push(document);
+    existingBySourcePath.set(document.sourcePath, group);
+  }
+
+  for (const [sourcePath, doc] of docsBySourcePath.entries()) {
+    const existing = existingBySourcePath.get(sourcePath) || [];
+    const activeSameHash = existing.find((document) => (
+      document.state === 'STATE_ACTIVE' && document.contentHash === doc.contentHash
+    ));
+
+    if (activeSameHash) {
+      skipped.push(doc);
+      for (const duplicate of existing) {
+        if (duplicate.name === activeSameHash.name) {
+          continue;
+        }
+
+        toDelete.push({
+          name: duplicate.name,
+          sourcePath,
+          reason: duplicate.contentHash === doc.contentHash ? 'duplicate' : 'stale-hash',
+        });
+      }
+      continue;
+    }
+
+    for (const document of existing) {
+      toDelete.push({
+        name: document.name,
+        sourcePath,
+        reason: document.state === 'STATE_FAILED' ? 'failed' : 'changed-hash',
+      });
+    }
+    toUpload.push(doc);
+  }
+
+  for (const document of existingDocuments) {
+    if (
+      document.sourcePath
+      && !docsBySourcePath.has(document.sourcePath)
+      && isWithinSyncedSources(document.sourcePath, syncedSourceDirs)
+    ) {
+      toDelete.push({
+        name: document.name,
+        sourcePath: document.sourcePath,
+        reason: 'removed-local-doc',
+      });
+    }
+  }
+
+  return {
+    existingDocumentsCount: existingDocuments.length,
+    missingMetadata,
+    skipped,
+    toDelete: dedupeDeletes(toDelete),
+    toUpload,
+  };
+}
+
+function isWithinSyncedSources(sourcePath: string, syncedSourceDirs: string[]) {
+  return syncedSourceDirs.some((dir) => !dir || sourcePath === dir || sourcePath.startsWith(`${dir}/`));
+}
+
+async function listStoreDocuments(ai: GeminiSyncClient, storeName: string): Promise<ListedStoreDocument[]> {
+  const listed = await ai.fileSearchStores.documents.list({
+    parent: storeName,
+    config: {pageSize: 20},
+  });
+  const result: ListedStoreDocument[] = [];
+
+  if (isAsyncIterable<GeminiStoreDocument>(listed)) {
+    for await (const document of listed) {
+      const normalized = normalizeStoreDocument(document);
+      if (normalized.name) {
+        result.push(normalized as ListedStoreDocument);
+      }
+    }
+    return result;
+  }
+
+  for (const document of listed) {
+    const normalized = normalizeStoreDocument(document);
+    if (normalized.name) {
+      result.push(normalized as ListedStoreDocument);
+    }
+  }
+
+  return result;
+}
+
+function normalizeStoreDocument(document: GeminiStoreDocument): GeminiStoreDocument & {
+  sourcePath: string;
+  contentHash: string;
+} {
+  const metadata = document.customMetadata || document.custom_metadata || [];
+  return {
+    ...document,
+    sourcePath: getMetadataValue(metadata, 'sourcePath'),
+    contentHash: getMetadataValue(metadata, 'contentHash'),
+  };
+}
+
+function getMetadataValue(metadata: GeminiMetadataEntry[], key: string) {
+  const item = metadata.find((entry) => entry.key === key);
+  return item?.stringValue || item?.string_value || '';
+}
+
+function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
+  return Boolean(value && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === 'function');
+}
+
+function dedupeDeletes(toDelete: PlannedDelete[]) {
+  const seen = new Set<string>();
+  const result: PlannedDelete[] = [];
+
+  for (const item of toDelete) {
+    if (seen.has(item.name)) {
+      continue;
+    }
+    seen.add(item.name);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function printIncrementalSyncPlan(syncPlan: IncrementalSyncPlan) {
+  console.log(JSON.stringify({
+    mode: 'incremental',
+    existingDocumentsCount: syncPlan.existingDocumentsCount,
+    skippedUnchangedCount: syncPlan.skipped.length,
+    uploadCount: syncPlan.toUpload.length,
+    deleteCount: syncPlan.toDelete.length,
+    deleteReasons: countBy(syncPlan.toDelete, (item) => item.reason),
+    missingMetadataCount: syncPlan.missingMetadata.length,
+  }, null, 2));
+
+  if (syncPlan.missingMetadata.length) {
+    console.log('Documents without sourcePath metadata are left untouched:');
+    for (const document of syncPlan.missingMetadata) {
+      console.log(`- ${document.name || 'unknown'} (${document.displayName || 'untitled'})`);
+    }
+  }
+}
+
+function countBy<T>(items: T[], getKey: (item: T) => string) {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    const key = getKey(item);
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+async function deletePlannedDocuments(ai: GeminiSyncClient, toDelete: PlannedDelete[]) {
+  if (!toDelete.length) {
+    return;
+  }
+
+  console.log(`Deleting ${toDelete.length} stale Gemini File Search document(s).`);
+  for (const item of toDelete) {
+    console.log(`Deleting ${item.sourcePath} (${item.reason})`);
+    await ai.fileSearchStores.documents.delete({name: item.name, config: {force: true}});
+  }
+}
+
 async function writeUploadFile(rootDir: string, doc: SyncDocument) {
   const cacheDir = path.join(rootDir, CACHE_DIR);
   await fs.mkdir(cacheDir, {recursive: true});
@@ -239,53 +515,37 @@ async function waitForOperation(ai: GeminiSyncClient, operation: any) {
   }
 }
 
-function getManifestPath(rootDir: string) {
-  return path.join(rootDir, CACHE_DIR, MANIFEST_FILENAME);
+function buildIndexableMarkdown({
+  content,
+  description,
+  section,
+  sourcePath,
+  title,
+  url,
+}: {
+  content: string;
+  description?: string;
+  section: string;
+  sourcePath: string;
+  title: string;
+  url: string;
+}) {
+  const contextLines = [
+    '<!-- GEMINI_SEARCH_CONTEXT_START',
+    `Title: ${title}`,
+    `Section: ${section}`,
+    `Source path: ${sourcePath}`,
+    `URL: ${url}`,
+    description ? `Description: ${description}` : '',
+    'GEMINI_SEARCH_CONTEXT_END -->',
+  ].filter((line) => line !== '');
+
+  return `${contextLines.join('\n')}\n\n${content}`;
 }
 
-async function readManifest(manifestPath: string): Promise<SyncManifest> {
-  try {
-    const raw = await fs.readFile(manifestPath, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<SyncManifest>;
-    if (parsed.version === 1 && parsed.documents && typeof parsed.documents === 'object') {
-      return {
-        version: 1,
-        documents: parsed.documents,
-      };
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error;
-    }
-  }
-
-  return {version: 1, documents: {}};
-}
-
-function createManifest(docs: SyncDocument[]): SyncManifest {
-  return {
-    version: 1,
-    documents: Object.fromEntries(docs.map((doc) => [
-      doc.sourcePath,
-      {
-        contentHash: doc.contentHash,
-        url: doc.url,
-        title: doc.title,
-        section: doc.section,
-      },
-    ])),
-  };
-}
-
-async function writeManifest(manifestPath: string, manifest: SyncManifest) {
-  await fs.mkdir(path.dirname(manifestPath), {recursive: true});
-  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-}
-
-export function extractTitle(raw: string, absolutePath: string) {
-  const frontMatterTitle = raw.match(/^---[\s\S]*?\ntitle:\s*["']?(.+?)["']?\n[\s\S]*?---/m)?.[1]?.trim();
-  if (frontMatterTitle) {
-    return frontMatterTitle;
+export function extractTitle(raw: string, absolutePath: string, frontMatter = parseFrontMatter(raw)) {
+  if (frontMatter.title) {
+    return frontMatter.title;
   }
 
   const heading = raw.match(/^#\s+(.+)$/m)?.[1]?.trim();
@@ -298,6 +558,29 @@ export function extractTitle(raw: string, absolutePath: string) {
 
 export function stripFrontMatter(raw: string) {
   return raw.replace(/^---[\s\S]*?---\s*/m, '').trim();
+}
+
+function parseFrontMatter(raw: string): Record<string, string> {
+  if (!raw.startsWith('---')) {
+    return {};
+  }
+
+  const end = raw.indexOf('\n---', 3);
+  if (end === -1) {
+    return {};
+  }
+
+  const frontMatter = raw.slice(3, end).trim();
+  const result: Record<string, string> = {};
+
+  for (const line of frontMatter.split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.+)$/);
+    if (match) {
+      result[match[1]] = match[2].replace(/^["']|["']$/g, '').trim();
+    }
+  }
+
+  return result;
 }
 
 export function buildDocUrl(siteUrl: string, relativePath: string, basePathname = '/docs') {
