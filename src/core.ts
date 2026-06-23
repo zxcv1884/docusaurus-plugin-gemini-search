@@ -34,10 +34,23 @@ export type GeminiSearchResult = {
   interactionId: string;
 };
 
+export type GeminiSearchStreamEvent =
+  | {
+    type: 'delta';
+    text: string;
+  }
+  | {
+    type: 'done';
+    answer: string;
+    citations: Citation[];
+    interactionId: string;
+  };
+
 export type InteractionInput = {
   model: string;
   input: string;
   store: boolean;
+  stream?: boolean;
   previous_interaction_id?: string;
   system_instruction: string;
   tools: Array<{
@@ -60,12 +73,13 @@ export type InteractionResponse = {
 
 export type GeminiSearchClient = {
   interactions: {
-    create(input: InteractionInput): Promise<InteractionResponse>;
+    create(input: InteractionInput): Promise<InteractionResponse | AsyncIterable<unknown>>;
   };
 };
 
 export type GeminiSearch = {
   ask(input: GeminiSearchAskInput): Promise<GeminiSearchResult>;
+  stream(input: GeminiSearchAskInput): AsyncIterable<GeminiSearchStreamEvent>;
 };
 
 export type AnswerTransformContext = {
@@ -116,6 +130,13 @@ export function createGeminiSearch(options: GeminiSearchOptions = {}): GeminiSea
       }
       return askGeminiSearch(options, input, options.client || cachedClient);
     },
+    async *stream(input) {
+      const apiKey = options.apiKey || getEnvValue('GEMINI_API_KEY');
+      if (apiKey && !options.client && !cachedClient) {
+        cachedClient = await createGoogleGenAIClient(apiKey);
+      }
+      yield* streamGeminiSearch(options, input, options.client || cachedClient);
+    },
   };
 }
 
@@ -124,6 +145,64 @@ export async function askGeminiSearch(
   input: GeminiSearchAskInput,
   client?: GeminiSearchClient,
 ): Promise<GeminiSearchResult> {
+  const context = await resolveAskContext(options, input, client);
+  const response = await context.ai.interactions.create(createInteractionInput(options, context, false)) as InteractionResponse;
+  return finalizeGeminiSearchResult(options, input, response);
+}
+
+export async function* streamGeminiSearch(
+  options: GeminiSearchOptions = {},
+  input: GeminiSearchAskInput,
+  client?: GeminiSearchClient,
+): AsyncIterable<GeminiSearchStreamEvent> {
+  const context = await resolveAskContext(options, input, client);
+  const response = await context.ai.interactions.create(createInteractionInput(options, context, true));
+  if (!isAsyncIterable(response)) {
+    const result = await finalizeGeminiSearchResult(options, input, response);
+    if (result.answer) {
+      yield {type: 'delta', text: result.answer};
+    }
+    yield {type: 'done', ...result};
+    return;
+  }
+
+  const streamedEvents: unknown[] = [];
+  const textParts: string[] = [];
+  let interactionId = '';
+
+  for await (const event of response) {
+    streamedEvents.push(event);
+    const errorMessage = getStreamEventError(event);
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
+
+    const nextInteractionId = getInteractionIdFromStreamEvent(event);
+    if (nextInteractionId) {
+      interactionId = nextInteractionId;
+    }
+
+    const text = getStreamEventText(event);
+    if (text) {
+      textParts.push(text);
+      yield {type: 'delta', text};
+    }
+  }
+
+  const streamResponse = {
+    id: interactionId,
+    output_text: textParts.join(''),
+    steps: streamedEvents,
+  };
+  const result = await finalizeGeminiSearchResult(options, input, streamResponse);
+  yield {type: 'done', ...result};
+}
+
+async function resolveAskContext(
+  options: GeminiSearchOptions,
+  input: GeminiSearchAskInput,
+  client?: GeminiSearchClient,
+) {
   const question = input.question.trim();
   const previousInteractionId = input.previousInteractionId?.trim();
 
@@ -145,24 +224,45 @@ export async function askGeminiSearch(
   }
 
   const ai = client || options.client || await createGoogleGenAIClient(apiKey);
-  const response = await ai.interactions.create({
+  return {ai, question, previousInteractionId, fileSearchStoreName};
+}
+
+function createInteractionInput(
+  options: GeminiSearchOptions,
+  context: {
+    question: string;
+    previousInteractionId?: string;
+    fileSearchStoreName: string;
+  },
+  stream: boolean,
+): InteractionInput {
+  return {
     model: options.model || DEFAULT_MODEL,
-    input: question,
+    input: context.question,
     store: true,
-    ...(previousInteractionId ? {previous_interaction_id: previousInteractionId} : {}),
+    ...(stream ? {stream: true} : {}),
+    ...(context.previousInteractionId ? {previous_interaction_id: context.previousInteractionId} : {}),
     system_instruction: resolveSystemInstruction(options),
     tools: [
       {
         type: 'file_search',
-        file_search_store_names: [fileSearchStoreName],
+        file_search_store_names: [context.fileSearchStoreName],
       },
     ],
     generation_config: {
       temperature: 0,
       max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
     },
-  });
+  };
+}
 
+async function finalizeGeminiSearchResult(
+  options: GeminiSearchOptions,
+  input: GeminiSearchAskInput,
+  response: InteractionResponse,
+): Promise<GeminiSearchResult> {
+  const question = input.question.trim();
+  const previousInteractionId = input.previousInteractionId?.trim();
   const rawAnswer = getResponseText(response);
   const interactionId = getInteractionId(response);
   const rawCitations = extractCitations(response, rawAnswer, options.siteUrl || getEnvValue('GEMINI_SEARCH_SITE_URL'));
@@ -316,6 +416,63 @@ function collectTextParts(value: unknown, depth = 0, seen = new WeakSet<object>(
 
 function getInteractionId(response: any) {
   return typeof response?.id === 'string' ? response.id : '';
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return Boolean(value && typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function');
+}
+
+function getInteractionIdFromStreamEvent(event: unknown) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+
+  const record = event as Record<string, unknown>;
+  if (typeof record.interaction_id === 'string') {
+    return record.interaction_id;
+  }
+
+  const interaction = record.interaction;
+  if (interaction && typeof interaction === 'object' && typeof (interaction as Record<string, unknown>).id === 'string') {
+    return (interaction as Record<string, string>).id;
+  }
+
+  return '';
+}
+
+function getStreamEventText(event: unknown) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+
+  const record = event as Record<string, unknown>;
+  const delta = record.delta;
+  if (delta && typeof delta === 'object') {
+    const deltaRecord = delta as Record<string, unknown>;
+    if (deltaRecord.type === 'text' && typeof deltaRecord.text === 'string') {
+      return deltaRecord.text;
+    }
+  }
+
+  return '';
+}
+
+function getStreamEventError(event: unknown) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+
+  const record = event as Record<string, unknown>;
+  if (record.event_type !== 'error') {
+    return '';
+  }
+
+  const error = record.error;
+  if (error && typeof error === 'object' && typeof (error as Record<string, unknown>).message === 'string') {
+    return (error as Record<string, string>).message;
+  }
+
+  return 'Gemini Search stream failed';
 }
 
 function extractCitations(response: any, answer: string, siteUrl: string): Citation[] {

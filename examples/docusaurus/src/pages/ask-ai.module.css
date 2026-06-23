@@ -138,13 +138,11 @@
   grid-template-columns: 1fr auto;
   gap: 12px;
   align-items: stretch;
-  position: sticky;
-  bottom: 16px;
+  margin-top: 20px;
   padding: 12px;
   border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 8px;
   background: var(--ifm-background-color);
-  box-shadow: var(--ifm-global-shadow-lw);
 }
 
 .form textarea {

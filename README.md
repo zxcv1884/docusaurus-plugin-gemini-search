@@ -5,6 +5,8 @@
 
 API-first Gemini File Search for Docusaurus. Sync your docs, serve answers through a Fetch-compatible API handler, and bring your own UI.
 
+This package does not publish a production API route for you. In production, create your own server-side route, serverless function, or worker that imports `/fetch` or `/core`; keep `GEMINI_API_KEY` on that server-side runtime.
+
 ## Setup
 
 Install the package:
@@ -48,14 +50,14 @@ Preview a built Docusaurus site locally:
 
 ```bash
 npm run build
-npx gemini-search preview --api-path /api/gemini-search --site-dir build --port 3021
+npx gemini-search preview --api-path /api/gemini-search --site-dir build --port 3021 --stream
 ```
 
-The preview server serves the static Docusaurus `build/` directory, mounts the Gemini Search Fetch handler at the configured API path, loads `.env` and `.env.local`, and prints the local URL. It does not sync docs, create stores, or change remote Gemini File Search data.
+The preview server serves the static Docusaurus `build/` directory, mounts the Gemini Search Fetch handler at the configured API path, loads `.env` and `.env.local`, and prints the local URL. Pass `--stream` to test Server-Sent Events locally. It does not sync docs, create stores, or change remote Gemini File Search data.
 
 ## Quick Start
 
-Create a Fetch handler in your server runtime:
+Create a Fetch handler in your server runtime. This route is required in production because the Docusaurus plugin export does not mount an API endpoint automatically:
 
 ```ts
 import {createGeminiSearchFetchHandler} from 'docusaurus-plugin-gemini-search/fetch';
@@ -78,6 +80,26 @@ Your UI calls that route with:
 
 The response includes an `interactionId`. Store that value in your UI and send it as `previousInteractionId` on the next turn to continue the conversation with Gemini's server-side interaction history.
 
+To stream successful answers as Server-Sent Events, opt in on the server:
+
+```ts
+const handler = createGeminiSearchFetchHandler({
+  stream: true,
+});
+```
+
+Streamed responses emit incremental `delta` events followed by one `done` event:
+
+```text
+event: delta
+data: {"type":"delta","text":"Partial answer"}
+
+event: done
+data: {"type":"done","answer":"Full answer","citations":[],"interactionId":"..."}
+```
+
+Validation and access-denied responses still use normal JSON error responses.
+
 ### Advanced: Core API
 
 Use this when you want full control over routing, validation, auth, rate limiting, or response formatting.
@@ -95,6 +117,15 @@ const result = await geminiSearch.ask({
 });
 
 console.log(result.answer, result.citations, result.interactionId);
+
+for await (const event of geminiSearch.stream({question: 'How do I install this?'})) {
+  if (event.type === 'delta') {
+    process.stdout.write(event.text);
+  }
+  if (event.type === 'done') {
+    console.log(event.citations, event.interactionId);
+  }
+}
 ```
 
 ## Deploy
@@ -182,6 +213,7 @@ The Fetch handler accepts every core option plus HTTP-layer options:
 
 ```ts
 createGeminiSearchFetchHandler({
+  stream: true,
   allowedOrigins: ['https://docs.example.com'],
   async checkAccess({clientIp, question}) {
     return {allowed: true};
@@ -214,16 +246,19 @@ Use a different Gemini File Search store, or delete stale documents from the sto
 ```bash
 npx gemini-search preview
 npx gemini-search preview --api-path /api/gemini-search --site-dir build --port 3021
+npx gemini-search preview --api-path /api/gemini-search --site-dir build --stream
 npx gemini-search preview --allowed-origin http://127.0.0.1:3020
 ```
 
-`preview` is a local development helper. It serves static files from `--site-dir`, mounts the package Fetch handler at `--api-path`, and reads `.env` followed by `.env.local` from the current working directory. `.env.local` values override matching `.env` values, while environment variables already set in the shell are preserved.
+`preview` is a local development helper. It serves static files from `--site-dir`, mounts the package Fetch handler at `--api-path`, and reads `.env` followed by `.env.local` from the current working directory. `.env.local` values override matching `.env` values, while environment variables already set in the shell are preserved. Add `--stream` when you want the preview API to return `text/event-stream` responses.
+
+The preview helper mounts its own package Fetch handler; it does not load a project-specific route file such as `api/gemini-search.ts`. Use the Fetch handler options in your production route, and use preview CLI flags such as `--stream` for local preview behavior.
 
 It intentionally does not replace a production API wrapper. Keep project-specific concerns such as rate limiting, Turnstile, origin policy, tenant checks, Redis persistence, or custom citation cleanup in your own server route, usually by wrapping `/fetch` or `/core`.
 
 ### Docusaurus Plugin Options
 
-By default, the plugin only registers its name and does not mount UI or API routes. Enable `syncOnBuild` if you want `docusaurus build` to sync docs after the build:
+By default, the Docusaurus plugin only registers its name and does not mount UI or API routes. Create a server route with `/fetch` or `/core` for production Ask AI traffic. Enable `syncOnBuild` if you want `docusaurus build` to sync docs after the build:
 
 ```ts
 // docusaurus.config.ts

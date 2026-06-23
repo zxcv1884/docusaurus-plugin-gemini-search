@@ -17,6 +17,7 @@ export type PreviewOptions = {
   port?: number;
   cwd?: string;
   allowedOrigins?: string[];
+  stream?: boolean;
   envFiles?: string[];
   log?: (line: string) => void;
 };
@@ -41,7 +42,7 @@ export async function startGeminiSearchPreview(options: PreviewOptions = {}): Pr
   const siteDir = path.resolve(cwd, options.siteDir || DEFAULT_SITE_DIR);
   const loadedEnvFiles = loadEnvFiles(cwd, options.envFiles || DEFAULT_ENV_FILES);
   const allowedOrigins = options.allowedOrigins || [];
-  const handler = createGeminiSearchFetchHandler({allowedOrigins});
+  const handler = createGeminiSearchFetchHandler({allowedOrigins, stream: options.stream});
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -85,6 +86,9 @@ export async function startGeminiSearchPreview(options: PreviewOptions = {}): Pr
   const log = options.log || console.log;
   log(`Gemini Search preview running at ${url}`);
   log(`Gemini Search API mounted at ${apiUrl}`);
+  if (options.stream) {
+    log('Gemini Search API streaming enabled');
+  }
   log(`Serving Docusaurus build from ${siteDir}`);
   if (loadedEnvFiles.length) {
     log(`Loaded env files: ${loadedEnvFiles.join(', ')}`);
@@ -284,7 +288,26 @@ async function sendFetchResponse(res: ServerResponse, response: Response) {
   response.headers.forEach((value, name) => {
     res.setHeader(name, value);
   });
-  res.end(Buffer.from(await response.arrayBuffer()));
+  if (!response.body) {
+    res.end();
+    return;
+  }
+
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!res.write(Buffer.from(value))) {
+        await new Promise((resolve) => res.once('drain', resolve));
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  res.end();
 }
 
 function setCorsHeaders(

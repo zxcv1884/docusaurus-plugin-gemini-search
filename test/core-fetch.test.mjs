@@ -4,6 +4,7 @@ import {
   askGeminiSearch,
   createGeminiSearch,
   GeminiSearchError,
+  streamGeminiSearch,
   validateGeminiSearchInput,
 } from '../dist/core.js';
 import {createGeminiSearchFetchHandler} from '../dist/fetch.js';
@@ -109,6 +110,83 @@ test('askGeminiSearch passes previous interaction id on follow-up turns', async 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].previous_interaction_id, 'interaction-1');
   assert.equal(result.interactionId, 'interaction-2');
+});
+
+test('streamGeminiSearch yields text deltas and final citations', async () => {
+  const calls = [];
+  async function* streamEvents() {
+    yield {
+      event_type: 'interaction.created',
+      interaction: {id: 'interaction-stream', status: 'in_progress'},
+    };
+    yield {
+      event_type: 'step.delta',
+      delta: {type: 'text', text: 'Install '},
+    };
+    yield {
+      event_type: 'step.delta',
+      delta: {type: 'text', text: 'with npm.'},
+    };
+    yield {
+      event_type: 'interaction.completed',
+      interaction: {
+        id: 'interaction-stream',
+        status: 'completed',
+        steps: [
+          {
+            groundingMetadata: {
+              groundingChunks: [
+                {
+                  retrievedContext: {
+                    title: 'Setup',
+                    uri: 'https://docs.example.com/setup',
+                    text: 'npm install',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+  }
+
+  const events = [];
+  for await (const event of streamGeminiSearch({
+    apiKey: 'test-key',
+    fileSearchStoreName: 'fileSearchStores/docs',
+    client: {
+      interactions: {
+        async create(input) {
+          calls.push(input);
+          return streamEvents();
+        },
+      },
+    },
+  }, {
+    question: 'How do I install this?',
+  })) {
+    events.push(event);
+  }
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].stream, true);
+  assert.equal(calls[0].store, true);
+  assert.deepEqual(events, [
+    {type: 'delta', text: 'Install '},
+    {type: 'delta', text: 'with npm.'},
+    {
+      type: 'done',
+      answer: 'Install with npm.',
+      citations: [{
+        title: 'Setup',
+        url: 'https://docs.example.com/setup',
+        sourcePath: undefined,
+        snippet: 'npm install',
+      }],
+      interactionId: 'interaction-stream',
+    },
+  ]);
 });
 
 test('createGeminiSearch reuses the configured client across asks', async () => {
@@ -260,6 +338,105 @@ test('fetch handler passes previous interaction id and returns interaction id', 
   });
 });
 
+test('fetch handler streams SSE when stream option is enabled', async () => {
+  async function* streamEvents() {
+    yield {
+      event_type: 'interaction.created',
+      interaction: {id: 'interaction-stream', status: 'in_progress'},
+    };
+    yield {
+      event_type: 'step.delta',
+      delta: {type: 'text', text: 'First '},
+    };
+    yield {
+      event_type: 'step.delta',
+      delta: {type: 'text', text: 'chunk.'},
+    };
+    yield {
+      event_type: 'interaction.completed',
+      interaction: {id: 'interaction-stream', status: 'completed'},
+    };
+  }
+
+  const handler = createGeminiSearchFetchHandler({
+    apiKey: 'test-key',
+    fileSearchStoreName: 'fileSearchStores/docs',
+    stream: true,
+    client: {
+      interactions: {
+        async create(input) {
+          assert.equal(input.stream, true);
+          assert.equal(input.previous_interaction_id, 'interaction-1');
+          return streamEvents();
+        },
+      },
+    },
+  });
+  const response = await handler(new Request('https://docs.example.com/api/gemini-search', {
+    method: 'POST',
+    body: JSON.stringify({
+      previousInteractionId: 'interaction-1',
+      question: 'Can you stream?',
+    }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/event-stream/);
+  const events = parseSseEvents(await response.text());
+  assert.deepEqual(events, [
+    {event: 'delta', data: {type: 'delta', text: 'First '}},
+    {event: 'delta', data: {type: 'delta', text: 'chunk.'}},
+    {
+      event: 'done',
+      data: {
+        type: 'done',
+        answer: 'First chunk.',
+        citations: [],
+        interactionId: 'interaction-stream',
+      },
+    },
+  ]);
+});
+
+test('fetch handler sends SSE error events when Gemini stream fails', async () => {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  async function* streamEvents() {
+    yield {
+      event_type: 'error',
+      error: {message: 'Stream failed'},
+    };
+  }
+
+  try {
+    const handler = createGeminiSearchFetchHandler({
+      apiKey: 'test-key',
+      fileSearchStoreName: 'fileSearchStores/docs',
+      stream: true,
+      client: {
+        interactions: {
+          async create() {
+            return streamEvents();
+          },
+        },
+      },
+    });
+    const response = await handler(new Request('https://docs.example.com/api/gemini-search', {
+      method: 'POST',
+      body: JSON.stringify({
+        question: 'Can you stream?',
+      }),
+    }));
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(parseSseEvents(await response.text()), [
+      {event: 'error', data: {error: 'Failed to generate an answer'}},
+    ]);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 test('fetch handler maps missing Gemini configuration without calling Gemini', async () => {
   const originalApiKey = process.env.GEMINI_API_KEY;
   const originalStoreName = process.env.GEMINI_FILE_SEARCH_STORE_NAME;
@@ -291,3 +468,15 @@ test('fetch handler maps missing Gemini configuration without calling Gemini', a
     }
   }
 });
+
+function parseSseEvents(text) {
+  return text.trim().split(/\n\n/).map((message) => {
+    const lines = message.split(/\n/);
+    const event = lines.find((line) => line.startsWith('event:'))?.slice('event:'.length).trim();
+    const data = lines
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice('data:'.length).trimStart())
+      .join('\n');
+    return {event, data: JSON.parse(data)};
+  });
+}

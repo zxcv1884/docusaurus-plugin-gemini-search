@@ -65,4 +65,5 @@ test('help text documents source precedence and sync options', () => {
   assert.match(help, /--api-path <path>/);
   assert.match(help, /--site-dir <path>/);
   assert.match(help, /--allowed-origin <origin>/);
+  assert.match(help, /--stream/);
 });

@@ -1,6 +1,6 @@
 {
   "name": "docusaurus-plugin-gemini-search",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Add a Gemini-powered AI assistant to your Docusaurus documentation.",
   "type": "module",
   "main": "./dist/index.js",

@@ -5,6 +5,7 @@ import {
   type GeminiSearch,
   type GeminiSearchAskInput,
   type GeminiSearchOptions,
+  type GeminiSearchStreamEvent,
 } from './core.js';
 
 const MAX_RAW_BODY_BYTES = 128 * 1024;
@@ -18,10 +19,12 @@ export type {
   GeminiSearchErrorCode,
   GeminiSearchOptions,
   GeminiSearchResult,
+  GeminiSearchStreamEvent,
 } from './core.js';
 
 export type GeminiSearchFetchHandlerOptions = GeminiSearchOptions & {
   allowedOrigins?: string[];
+  stream?: boolean;
   checkAccess?: (context: AccessContext) => MaybePromise<AccessResult | void>;
   onError?: (error: unknown, context: ErrorContext) => MaybePromise<void>;
 };
@@ -59,6 +62,16 @@ type HttpResult = {
   headers?: Record<string, string>;
 };
 
+type PreparedRequest =
+  | {
+    ok: true;
+    input: GeminiSearchAskInput;
+  }
+  | {
+    ok: false;
+    result: HttpResult;
+  };
+
 class RequestBodyError extends Error {
   readonly statusCode: number;
 
@@ -73,43 +86,119 @@ export function createGeminiSearchFetchHandler(options: GeminiSearchFetchHandler
   const search = createGeminiSearch(options);
 
   return async function geminiSearchFetchHandler(request: Request): Promise<Response> {
-    const result = await handleGeminiSearchRequest({
+    const prepared = await prepareGeminiSearchRequest({
       options,
-      search,
       request,
       clientIp: getClientIp(request),
       requestOrigin: getRequestOrigin(request),
     });
 
-    return Response.json(result.body, {
-      status: result.statusCode,
-      headers: {
-        'Cache-Control': 'no-store',
-        ...(result.headers || {}),
-      },
+    if (!prepared.ok) {
+      return jsonResponse(prepared.result);
+    }
+
+    if (options.stream) {
+      return streamResponse(search.stream(prepared.input), options, request, prepared.input);
+    }
+
+    const result = await handleGeminiSearchRequest({
+      options,
+      search,
+      request,
+      input: prepared.input,
     });
+
+    return jsonResponse(result);
   };
 }
 
-async function handleGeminiSearchRequest({
+function jsonResponse(result: HttpResult) {
+  return Response.json(result.body, {
+    status: result.statusCode,
+    headers: {
+      'Cache-Control': 'no-store',
+      ...(result.headers || {}),
+    },
+  });
+}
+
+function streamResponse(
+  events: AsyncIterable<GeminiSearchStreamEvent>,
+  options: GeminiSearchFetchHandlerOptions,
+  request: Request,
+  input: GeminiSearchAskInput,
+) {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const event of events) {
+          if (request.signal?.aborted) {
+            break;
+          }
+          controller.enqueue(encoder.encode(formatSseEvent(event.type, event)));
+        }
+      } catch (error) {
+        if (request.signal?.aborted) {
+          return;
+        }
+        const result = error instanceof GeminiSearchError
+          ? {error: error.message}
+          : {error: 'Failed to generate an answer'};
+        if (!(error instanceof GeminiSearchError)) {
+          console.error('Gemini Search stream failed:', error);
+          await options.onError?.(error, {
+            request,
+            question: input.question,
+            previousInteractionId: input.previousInteractionId,
+          });
+        }
+        try {
+          controller.enqueue(encoder.encode(formatSseEvent('error', result)));
+        } catch {
+          // Ignore write errors to closed stream
+        }
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // Ignore close errors to closed stream
+        }
+      }
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+}
+
+function formatSseEvent(event: string, data: unknown) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+async function prepareGeminiSearchRequest({
   options,
-  search,
   request,
   clientIp,
   requestOrigin,
 }: {
   options: GeminiSearchFetchHandlerOptions;
-  search: GeminiSearch;
   request: Request;
   clientIp: string;
   requestOrigin: string;
-}): Promise<HttpResult> {
+}): Promise<PreparedRequest> {
   if (request.method !== 'POST') {
-    return {statusCode: 405, body: {error: 'Method not allowed'}};
+    return {ok: false, result: {statusCode: 405, body: {error: 'Method not allowed'}}};
   }
 
   if (!isAllowedOrigin(request.headers.get('origin') || '', requestOrigin, options)) {
-    return {statusCode: 403, body: {error: 'Origin is not allowed'}};
+    return {ok: false, result: {statusCode: 403, body: {error: 'Origin is not allowed'}}};
   }
 
   let body: unknown;
@@ -117,17 +206,17 @@ async function handleGeminiSearchRequest({
     body = await readJsonBody(request);
   } catch (error) {
     if (error instanceof RequestBodyError) {
-      return {statusCode: error.statusCode, body: {error: error.message}};
+      return {ok: false, result: {statusCode: error.statusCode, body: {error: error.message}}};
     }
 
-    return {statusCode: 400, body: {error: 'Invalid JSON body'}};
+    return {ok: false, result: {statusCode: 400, body: {error: 'Invalid JSON body'}}};
   }
 
   const input = parseGeminiSearchInput(body);
   try {
     validateGeminiSearchInput(input.question, input.previousInteractionId);
   } catch (error) {
-    return toErrorResult(error);
+    return {ok: false, result: toErrorResult(error)};
   }
 
   const access = await checkAccess(options, {
@@ -140,12 +229,29 @@ async function handleGeminiSearchRequest({
   });
   if (access.allowed === false) {
     return {
-      statusCode: access.statusCode || 403,
-      headers: access.headers,
-      body: access.body || {error: access.error || 'Request is not allowed'},
+      ok: false,
+      result: {
+        statusCode: access.statusCode || 403,
+        headers: access.headers,
+        body: access.body || {error: access.error || 'Request is not allowed'},
+      },
     };
   }
 
+  return {ok: true, input};
+}
+
+async function handleGeminiSearchRequest({
+  options,
+  search,
+  request,
+  input,
+}: {
+  options: GeminiSearchFetchHandlerOptions;
+  search: GeminiSearch;
+  request: Request;
+  input: GeminiSearchAskInput;
+}): Promise<HttpResult> {
   try {
     return {
       statusCode: 200,

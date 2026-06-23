@@ -18,6 +18,8 @@ npm run build
 npm run preview
 ```
 
+The example `preview` script enables streaming with `gemini-search preview --stream`, so the Ask AI page can consume Server-Sent Events locally.
+
 The preview runs at:
 
 ```text
@@ -47,6 +49,8 @@ The copyable Fetch handler template is:
 ```text
 api/gemini-search.ts
 ```
+
+Deploy a server-side route or serverless function with this handler. The Docusaurus plugin does not automatically publish a production API route, and the Gemini API key must stay on the server.
 
 Deploy that route with your Docusaurus site and configure:
 

@@ -78,6 +78,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       host: getArgValue(args, '--host'),
       port: parsePositiveInteger(getArgValue(args, '--port')),
       allowedOrigins: args.values.get('--allowed-origin'),
+      stream: args.flags.has('--stream'),
     });
   } else if (command === 'doctor') {
     printDoctor();
@@ -105,6 +106,7 @@ Commands:
     --host <host>                     Hostname to bind (default: 127.0.0.1)
     --port <n>                        Port to bind (default: 3021)
     --allowed-origin <origin>         Extra CORS origin; repeatable
+    --stream                          Stream successful answers as Server-Sent Events
   gemini-search doctor                Check required environment variables
 `;
 }
