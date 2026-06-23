@@ -4,17 +4,36 @@ import path from 'node:path';
 import process from 'node:process';
 import {GoogleGenAI} from '@google/genai';
 
+const CACHE_DIR = '.gemini-search';
+const MANIFEST_FILENAME = 'manifest.json';
+
 export type SyncOptions = {
   rootDir?: string;
   docsDir?: string;
+  basePathname?: string;
+  sources?: SyncSource[];
   siteUrl?: string;
   storeName?: string;
   apiKey?: string;
   dryRun?: boolean;
   createStore?: boolean;
+  client?: GeminiSyncClient;
 };
 
-type SyncDocument = {
+export type SyncSource = {
+  dir: string;
+  basePathname?: string;
+  section?: string;
+};
+
+export type ResolvedSyncSource = {
+  dir: string;
+  absoluteDir: string;
+  basePathname: string;
+  section: string;
+};
+
+export type SyncDocument = {
   absolutePath: string;
   sourcePath: string;
   title: string;
@@ -24,19 +43,37 @@ type SyncDocument = {
   indexableContent: string;
 };
 
+export type GeminiSyncClient = {
+  fileSearchStores: {
+    create(input: unknown): Promise<{name?: string}>;
+    uploadToFileSearchStore(input: unknown): Promise<unknown>;
+  };
+  operations: {
+    get(input: unknown): Promise<unknown>;
+  };
+};
+
+export type SyncManifest = {
+  version: 1;
+  documents: Record<string, {
+    contentHash: string;
+    url: string;
+    title: string;
+    section: string;
+  }>;
+};
+
 export async function syncGeminiSearch(options: SyncOptions = {}) {
   const rootDir = options.rootDir || process.cwd();
-  const docsDir = path.resolve(rootDir, options.docsDir || 'docs');
   const apiKey = options.apiKey || process.env.GEMINI_API_KEY || '';
   const siteUrl = (options.siteUrl || process.env.GEMINI_SEARCH_SITE_URL || '').replace(/\/$/, '');
 
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is required.');
-  }
-
-  const ai = new GoogleGenAI({apiKey});
-
   if (options.createStore) {
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY is required.');
+    }
+
+    const ai = options.client || new GoogleGenAI({apiKey});
     const store = await ai.fileSearchStores.create({
       config: {
         displayName: 'Docusaurus Gemini Search',
@@ -46,59 +83,92 @@ export async function syncGeminiSearch(options: SyncOptions = {}) {
     return;
   }
 
+  const sources = resolveSyncSources(rootDir, options);
+  const docs = await collectDocs(rootDir, sources, siteUrl);
+  const manifestPath = getManifestPath(rootDir);
+  const previousManifest = await readManifest(manifestPath);
+  const changedDocs = docs.filter((doc) => previousManifest.documents[doc.sourcePath]?.contentHash !== doc.contentHash);
   const storeName = options.storeName || process.env.GEMINI_FILE_SEARCH_STORE_NAME || '';
-  if (!storeName.startsWith('fileSearchStores/')) {
+  if (!options.dryRun && !apiKey) {
+    throw new Error('GEMINI_API_KEY is required.');
+  }
+  if (!options.dryRun && !storeName.startsWith('fileSearchStores/')) {
     throw new Error('GEMINI_FILE_SEARCH_STORE_NAME must look like fileSearchStores/...');
   }
 
-  const docs = await collectDocs(rootDir, docsDir, siteUrl);
   if (options.dryRun) {
-    console.log(`Dry run: ${docs.length} document(s) would be uploaded to ${storeName}.`);
-    for (const doc of docs.slice(0, 20)) {
+    const target = storeName || 'the configured Gemini File Search store';
+    console.log(`Dry run: ${changedDocs.length} changed document(s) would be uploaded to ${target}.`);
+    for (const doc of changedDocs.slice(0, 20)) {
       console.log(`${doc.sourcePath} -> ${doc.url}`);
     }
-    if (docs.length > 20) {
-      console.log(`...and ${docs.length - 20} more.`);
+    if (changedDocs.length > 20) {
+      console.log(`...and ${changedDocs.length - 20} more.`);
     }
     return;
   }
 
-  console.log(`Uploading ${docs.length} document(s) to ${storeName}.`);
-  for (const [index, doc] of docs.entries()) {
-    console.log(`[${index + 1}/${docs.length}] ${doc.sourcePath}`);
-    await uploadDocument(ai, storeName, doc);
+  const ai = options.client || new GoogleGenAI({apiKey});
+  console.log(`Uploading ${changedDocs.length} changed document(s) to ${storeName}.`);
+  for (const [index, doc] of changedDocs.entries()) {
+    console.log(`[${index + 1}/${changedDocs.length}] ${doc.sourcePath}`);
+    await uploadDocument(ai, rootDir, storeName, doc);
   }
+  await writeManifest(manifestPath, createManifest(docs));
   console.log('Gemini Search sync complete.');
 }
 
-async function collectDocs(rootDir: string, docsDir: string, siteUrl: string): Promise<SyncDocument[]> {
-  const files = await walkMarkdownFiles(docsDir);
+export function resolveSyncSources(rootDir: string, options: Pick<SyncOptions, 'docsDir' | 'basePathname' | 'sources'>): ResolvedSyncSource[] {
+  const configuredSources = options.sources?.length
+    ? options.sources
+    : [
+      {
+        dir: options.docsDir || 'docs',
+        basePathname: options.basePathname || '/docs',
+      },
+    ];
+
+  return configuredSources.map((source) => {
+    const dir = source.dir || 'docs';
+    return {
+      dir,
+      absoluteDir: path.resolve(rootDir, dir),
+      basePathname: source.basePathname || '/docs',
+      section: source.section || inferSection(dir),
+    };
+  });
+}
+
+export async function collectDocs(rootDir: string, sources: ResolvedSyncSource[], siteUrl: string): Promise<SyncDocument[]> {
   const docs: SyncDocument[] = [];
 
-  for (const absolutePath of files) {
-    const raw = await fs.readFile(absolutePath, 'utf8');
-    const sourcePath = path.relative(rootDir, absolutePath).split(path.sep).join('/');
-    const title = extractTitle(raw, absolutePath);
-    const url = buildDocUrl(siteUrl, path.relative(docsDir, absolutePath));
-    const section = sourcePath.split('/')[1] || 'docs';
-    const indexableContent = [
-      `Title: ${title}`,
-      `URL: ${url}`,
-      `Source: ${sourcePath}`,
-      '',
-      stripFrontMatter(raw),
-    ].join('\n');
-    const contentHash = createHash('sha256').update(indexableContent).digest('hex').slice(0, 16);
+  for (const source of sources) {
+    const files = await walkMarkdownFiles(source.absoluteDir);
 
-    docs.push({
-      absolutePath,
-      sourcePath,
-      title,
-      url,
-      section,
-      contentHash,
-      indexableContent,
-    });
+    for (const absolutePath of files) {
+      const raw = await fs.readFile(absolutePath, 'utf8');
+      const sourcePath = path.relative(rootDir, absolutePath).split(path.sep).join('/');
+      const title = extractTitle(raw, absolutePath);
+      const url = buildDocUrl(siteUrl, path.relative(source.absoluteDir, absolutePath), source.basePathname);
+      const indexableContent = [
+        `Title: ${title}`,
+        `URL: ${url}`,
+        `Source: ${sourcePath}`,
+        '',
+        stripFrontMatter(raw),
+      ].join('\n');
+      const contentHash = createHash('sha256').update(indexableContent).digest('hex').slice(0, 16);
+
+      docs.push({
+        absolutePath,
+        sourcePath,
+        title,
+        url,
+        section: source.section,
+        contentHash,
+        indexableContent,
+      });
+    }
   }
 
   return docs.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath));
@@ -120,8 +190,8 @@ async function walkMarkdownFiles(dir: string): Promise<string[]> {
   return files;
 }
 
-async function uploadDocument(ai: GoogleGenAI, storeName: string, doc: SyncDocument) {
-  const uploadPath = await writeUploadFile(doc);
+async function uploadDocument(ai: GeminiSyncClient, rootDir: string, storeName: string, doc: SyncDocument) {
+  const uploadPath = await writeUploadFile(rootDir, doc);
   const operation = await ai.fileSearchStores.uploadToFileSearchStore({
     fileSearchStoreName: storeName,
     file: uploadPath,
@@ -141,8 +211,8 @@ async function uploadDocument(ai: GoogleGenAI, storeName: string, doc: SyncDocum
   await waitForOperation(ai, operation);
 }
 
-async function writeUploadFile(doc: SyncDocument) {
-  const cacheDir = path.join(process.cwd(), '.gemini-search');
+async function writeUploadFile(rootDir: string, doc: SyncDocument) {
+  const cacheDir = path.join(rootDir, CACHE_DIR);
   await fs.mkdir(cacheDir, {recursive: true});
   const filename = `${doc.contentHash}-${path.basename(doc.sourcePath).replace(/[^A-Za-z0-9._-]/g, '-')}`;
   const uploadPath = path.join(cacheDir, filename);
@@ -150,7 +220,7 @@ async function writeUploadFile(doc: SyncDocument) {
   return uploadPath;
 }
 
-async function waitForOperation(ai: GoogleGenAI, operation: any) {
+async function waitForOperation(ai: GeminiSyncClient, operation: any) {
   let current = operation;
   const startedAt = Date.now();
   const timeoutMs = 180_000;
@@ -169,7 +239,50 @@ async function waitForOperation(ai: GoogleGenAI, operation: any) {
   }
 }
 
-function extractTitle(raw: string, absolutePath: string) {
+function getManifestPath(rootDir: string) {
+  return path.join(rootDir, CACHE_DIR, MANIFEST_FILENAME);
+}
+
+async function readManifest(manifestPath: string): Promise<SyncManifest> {
+  try {
+    const raw = await fs.readFile(manifestPath, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<SyncManifest>;
+    if (parsed.version === 1 && parsed.documents && typeof parsed.documents === 'object') {
+      return {
+        version: 1,
+        documents: parsed.documents,
+      };
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  return {version: 1, documents: {}};
+}
+
+function createManifest(docs: SyncDocument[]): SyncManifest {
+  return {
+    version: 1,
+    documents: Object.fromEntries(docs.map((doc) => [
+      doc.sourcePath,
+      {
+        contentHash: doc.contentHash,
+        url: doc.url,
+        title: doc.title,
+        section: doc.section,
+      },
+    ])),
+  };
+}
+
+async function writeManifest(manifestPath: string, manifest: SyncManifest) {
+  await fs.mkdir(path.dirname(manifestPath), {recursive: true});
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+}
+
+export function extractTitle(raw: string, absolutePath: string) {
   const frontMatterTitle = raw.match(/^---[\s\S]*?\ntitle:\s*["']?(.+?)["']?\n[\s\S]*?---/m)?.[1]?.trim();
   if (frontMatterTitle) {
     return frontMatterTitle;
@@ -183,17 +296,31 @@ function extractTitle(raw: string, absolutePath: string) {
   return path.basename(absolutePath).replace(/\.(md|mdx)$/i, '').replace(/[-_]+/g, ' ');
 }
 
-function stripFrontMatter(raw: string) {
+export function stripFrontMatter(raw: string) {
   return raw.replace(/^---[\s\S]*?---\s*/m, '').trim();
 }
 
-function buildDocUrl(siteUrl: string, relativePath: string) {
+export function buildDocUrl(siteUrl: string, relativePath: string, basePathname = '/docs') {
   const withoutExt = relativePath.replace(/\.(md|mdx)$/i, '');
   const withoutIndex = withoutExt.replace(/(^|\/)index$/i, '');
   const slug = withoutIndex
     .split(path.sep)
     .join('/')
     .replace(/^\/+|\/+$/g, '');
-  const pathname = `/docs/${slug}`.replace(/\/$/, '');
-  return siteUrl ? `${siteUrl}${pathname}` : pathname;
+  const base = normalizeBasePathname(basePathname);
+  const pathname = slug ? `${base === '/' ? '' : base}/${slug}` : base;
+  return siteUrl ? `${siteUrl.replace(/\/$/, '')}${pathname}` : pathname;
+}
+
+function inferSection(dir: string) {
+  return dir.split(/[\\/]/).filter(Boolean)[0] || 'docs';
+}
+
+function normalizeBasePathname(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '/') {
+    return '/';
+  }
+
+  return `/${trimmed.replace(/^\/+|\/+$/g, '')}`;
 }

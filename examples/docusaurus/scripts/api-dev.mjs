@@ -4,7 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import {createGeminiSearchVercelHandler} from 'docusaurus-plugin-gemini-search/server';
+import {createGeminiSearchFetchHandler} from 'docusaurus-plugin-gemini-search/fetch';
 
 loadEnvFile('.env');
 loadEnvFile('.env.local');
@@ -14,7 +14,7 @@ const port = 3021;
 const apiPath = '/api/gemini-search';
 const allowedOrigins = ['http://127.0.0.1:3020'];
 
-const handler = createGeminiSearchVercelHandler({
+const handler = createGeminiSearchFetchHandler({
   allowedOrigins,
   prompt: [
     'You are a strict documentation question-answering assistant.',
@@ -39,7 +39,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  await handler(req, createVercelLikeResponse(res));
+  const request = await createFetchRequest(req, requestUrl);
+  const response = await handler(request);
+  await sendFetchResponse(res, response);
 });
 
 server.listen(port, host, () => {
@@ -47,19 +49,46 @@ server.listen(port, host, () => {
   console.log(`Allowed origins: ${allowedOrigins.join(', ') || '(same-origin only)'}`);
 });
 
-function createVercelLikeResponse(res) {
-  return {
-    setHeader(name, value) {
-      res.setHeader(name, value);
-    },
-    status(statusCode) {
-      res.statusCode = statusCode;
-      return this;
-    },
-    json(payload) {
-      sendJson(res, res.statusCode || 200, payload);
-    },
-  };
+async function createFetchRequest(req, requestUrl) {
+  const body = req.method === 'GET' || req.method === 'HEAD'
+    ? undefined
+    : await readRequestBody(req);
+
+  return new Request(requestUrl, {
+    method: req.method,
+    headers: normalizeHeaders(req.headers),
+    body,
+  });
+}
+
+function normalizeHeaders(headers) {
+  const normalized = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        normalized.append(name, item);
+      }
+    } else if (value !== undefined) {
+      normalized.set(name, value);
+    }
+  }
+  return normalized;
+}
+
+async function readRequestBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function sendFetchResponse(res, response) {
+  res.statusCode = response.status;
+  response.headers.forEach((value, name) => {
+    res.setHeader(name, value);
+  });
+  res.end(Buffer.from(await response.arrayBuffer()));
 }
 
 function sendJson(res, statusCode, payload) {

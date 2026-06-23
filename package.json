@@ -1,8 +1,10 @@
 {
   "name": "docusaurus-plugin-gemini-search",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Add a Gemini-powered AI assistant to your Docusaurus documentation.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "license": "MIT",
   "private": false,
   "keywords": [
@@ -16,7 +18,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com:zxcv1884/docusaurus-plugin-gemini-search.git"
+    "url": "git+https://github.com/zxcv1884/docusaurus-plugin-gemini-search.git"
   },
   "bugs": {
     "url": "https://github.com/zxcv1884/docusaurus-plugin-gemini-search/issues"
@@ -31,10 +33,15 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./server": {
-      "types": "./dist/server.d.ts",
-      "import": "./dist/server.js",
-      "default": "./dist/server.js"
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js",
+      "default": "./dist/core.js"
+    },
+    "./fetch": {
+      "types": "./dist/fetch.d.ts",
+      "import": "./dist/fetch.js",
+      "default": "./dist/fetch.js"
     },
     "./sync": {
       "types": "./dist/sync.d.ts",
@@ -47,11 +54,13 @@
     "dist",
     ".env.example",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
     "clean": "rm -rf dist",
     "prepack": "npm run build"
   },

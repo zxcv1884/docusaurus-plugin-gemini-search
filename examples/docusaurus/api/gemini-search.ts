@@ -1,6 +1,6 @@
-import {createGeminiSearchVercelHandler} from 'docusaurus-plugin-gemini-search/server';
+import {createGeminiSearchFetchHandler} from 'docusaurus-plugin-gemini-search/fetch';
 
-export default createGeminiSearchVercelHandler({
+export const POST = createGeminiSearchFetchHandler({
   prompt: [
     'You are a strict documentation question-answering assistant.',
     'Use only the retrieved documentation to answer.',

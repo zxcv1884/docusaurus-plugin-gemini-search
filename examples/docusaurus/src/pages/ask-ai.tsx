@@ -13,6 +13,7 @@ type Citation = {
 type ApiResponse = {
   answer?: string;
   citations?: Citation[];
+  interactionId?: string;
   error?: string;
   captchaRequired?: boolean;
 };
@@ -34,7 +35,7 @@ const suggestions = [
 ];
 
 export default function AskAiPage() {
-  const [conversationId, setConversationId] = useState(createConversationId);
+  const [previousInteractionId, setPreviousInteractionId] = useState<string>();
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -59,7 +60,11 @@ export default function AskAiPage() {
     setIsLoading(true);
 
     try {
-      const response = await requestAnswer(conversationId, trimmedQuestion);
+      const response = await requestAnswer({
+        previousInteractionId,
+        question: trimmedQuestion,
+      });
+      setPreviousInteractionId(response.interactionId);
       setMessages((current) => [
         ...current,
         {
@@ -88,7 +93,7 @@ export default function AskAiPage() {
     if (isLoading) {
       return;
     }
-    setConversationId(createConversationId());
+    setPreviousInteractionId(undefined);
     setQuestion('');
     setMessages([]);
   }
@@ -166,11 +171,17 @@ function SuggestionGrid({onSelect}: {onSelect: (question: string) => void}) {
   );
 }
 
-async function requestAnswer(conversationId: string, question: string): Promise<ApiResponse> {
+async function requestAnswer({
+  previousInteractionId,
+  question,
+}: {
+  previousInteractionId?: string;
+  question: string;
+}): Promise<ApiResponse> {
   const response = await fetch(apiPath, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({conversationId, question}),
+    body: JSON.stringify({previousInteractionId, question}),
   });
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json')
@@ -246,9 +257,4 @@ function renderMarkdownBlock(token: Token, key: number | string) {
   }
 
   return <p key={key}>{'text' in token ? String(token.text) : ''}</p>;
-}
-
-function createConversationId() {
-  const random = Math.random().toString(36).slice(2, 12);
-  return `gs-${Date.now().toString(36)}-${random}`;
 }
