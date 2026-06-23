@@ -25,7 +25,7 @@
   },
   "homepage": "https://github.com/zxcv1884/docusaurus-plugin-gemini-search#readme",
   "bin": {
-    "gemini-search": "./bin/gemini-search.js"
+    "gemini-search": "bin/gemini-search.js"
   },
   "exports": {
     ".": {
