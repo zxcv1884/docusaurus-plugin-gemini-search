@@ -3,20 +3,11 @@
 [![npm version](https://img.shields.io/npm/v/docusaurus-plugin-gemini-search.svg)](https://www.npmjs.com/package/docusaurus-plugin-gemini-search)
 [![license](https://img.shields.io/npm/l/docusaurus-plugin-gemini-search.svg)](./LICENSE)
 
-A Docusaurus-focused Gemini File Search toolkit for docs. The package is API-first: it gives you a Gemini search core, a Fetch API handler, and a sync CLI, while UI stays in your own site or the example app.
+API-first Gemini File Search for Docusaurus. Sync your docs, serve answers through a Fetch-compatible API handler, and bring your own UI.
 
-This package provides:
+## Setup
 
-- a runtime-agnostic Gemini File Search core
-- a Fetch `Request -> Response` adapter for server runtimes
-- a CLI for creating and syncing Gemini File Search stores
-- an example Docusaurus Ask AI page you can copy if you want a starter UI
-
-## Prepare Gemini
-
-You need a Gemini API key and a Gemini File Search store before the API can answer questions.
-
-Install the package in your docs project:
+Install the package:
 
 ```bash
 npm install docusaurus-plugin-gemini-search
@@ -25,7 +16,7 @@ npm install docusaurus-plugin-gemini-search
 Set your Gemini API key:
 
 ```env
-GEMINI_API_KEY=
+GEMINI_API_KEY=your-api-key
 ```
 
 Create a Gemini File Search store:
@@ -34,41 +25,37 @@ Create a Gemini File Search store:
 npx gemini-search create-store
 ```
 
-Copy the printed `fileSearchStores/...` value into:
+Add the printed store name and your site URL to the `.env` file:
 
 ```env
 GEMINI_FILE_SEARCH_STORE_NAME=fileSearchStores/...
-```
-
-Set your public docs URL:
-
-```env
 GEMINI_SEARCH_SITE_URL=https://docs.example.com
 ```
 
-## Choose An Integration
+Sync your docs:
 
-### Fetch Handler
+```bash
+npx gemini-search sync --dry-run
+npx gemini-search sync
+```
 
-Use this when your server runtime accepts Web Fetch `Request` objects and returns `Response` objects. This fits Next.js route handlers, Hono, Cloudflare-style runtimes, and many modern server frameworks.
+Sync keeps a local `.gemini-search/manifest.json` and skips unchanged documents on later runs.
+
+## Quick Start
+
+Create a Fetch handler in your server runtime:
 
 ```ts
 import {createGeminiSearchFetchHandler} from 'docusaurus-plugin-gemini-search/fetch';
 
-const handleGeminiSearch = createGeminiSearchFetchHandler({
-  prompt: [
-    'You are a strict documentation question-answering assistant.',
-    'Use only the retrieved documentation to answer.',
-    'If the documentation does not contain enough information, say that clearly.',
-  ].join(' '),
-});
+const handler = createGeminiSearchFetchHandler();
 
-export function POST(request: Request) {
-  return handleGeminiSearch(request);
+export async function POST(request: Request) {
+  return handler(request);
 }
 ```
 
-Your UI can call that route with:
+Your UI calls that route with:
 
 ```json
 {
@@ -79,7 +66,7 @@ Your UI can call that route with:
 
 The response includes an `interactionId`. Store that value in your UI and send it as `previousInteractionId` on the next turn to continue the conversation with Gemini's server-side interaction history.
 
-### Core API
+### Advanced: Core API
 
 Use this when you want full control over routing, validation, auth, rate limiting, or response formatting.
 
@@ -98,35 +85,11 @@ const result = await geminiSearch.ask({
 console.log(result.answer, result.citations, result.interactionId);
 ```
 
-## Add To An Existing Docusaurus Site
-
-Installing the package does not automatically create a page or an API route. Add the Fetch handler above to your server runtime, then sync your docs:
-
-```bash
-npx gemini-search sync --dry-run
-npx gemini-search sync
-```
-
-Sync keeps a local `.gemini-search/manifest.json` and skips unchanged documents on later runs.
-
-For local API testing, use the example `npm run api` or your own framework's dev server.
-
 ## Deploy
 
 ### Vercel
 
-Create an API route in your Docusaurus project:
-
-```ts
-// api/gemini-search.ts
-import {createGeminiSearchFetchHandler} from 'docusaurus-plugin-gemini-search/fetch';
-
-const handler = createGeminiSearchFetchHandler();
-
-export async function POST(request: Request) {
-  return handler(request);
-}
-```
+Create `api/gemini-search.ts` with the Fetch handler from Quick Start. Set `GEMINI_API_KEY`, `GEMINI_FILE_SEARCH_STORE_NAME`, and `GEMINI_SEARCH_SITE_URL` in the Vercel dashboard.
 
 Add a `vercel.json` if your project does not already configure Docusaurus output:
 
@@ -135,14 +98,6 @@ Add a `vercel.json` if your project does not already configure Docusaurus output
   "buildCommand": "docusaurus build",
   "outputDirectory": "build"
 }
-```
-
-Set these environment variables in Vercel:
-
-```env
-GEMINI_API_KEY=
-GEMINI_FILE_SEARCH_STORE_NAME=fileSearchStores/...
-GEMINI_SEARCH_SITE_URL=https://docs.example.com
 ```
 
 ### Cloudflare Workers
@@ -165,73 +120,28 @@ export default {
 
 ### Any Fetch-Compatible Server
 
-Use `createGeminiSearchFetchHandler` anywhere your server runtime accepts a Web Fetch `Request` and returns a `Response`, such as Hono, modern Next.js route handlers, Deno, Bun, or an adapter around Express/Fastify.
+`createGeminiSearchFetchHandler` works anywhere your server runtime accepts a Web Fetch `Request` and returns a `Response`, such as Hono, Next.js route handlers, Deno, or Bun.
 
-## Run The Example
+> **Production note:** The API has no built-in rate limiting. Add rate limiting through your hosting provider, a WAF, or the `checkAccess` option before going public.
 
-Build the package first:
+## Example
+
+The `examples/docusaurus/` directory contains a working Docusaurus site with an API server and an Ask AI page.
 
 ```bash
 git clone git@github.com:zxcv1884/docusaurus-plugin-gemini-search.git
 cd docusaurus-plugin-gemini-search
 npm install
 npm run build
-```
 
-Start the example API:
-
-```bash
 cd examples/docusaurus
 npm install
 cp .env.example .env.local
-npm run api
+npm run api   # starts the API at http://127.0.0.1:3021/api/gemini-search
+npm start     # in another terminal — opens http://127.0.0.1:3020/ask-ai
 ```
 
-The API runs at:
-
-```text
-http://127.0.0.1:3021/api/gemini-search
-```
-
-Without Gemini credentials, it returns:
-
-```json
-{"error":"Gemini Search is not configured"}
-```
-
-That is expected. It means the API server is running.
-
-To open the example Docusaurus page, use another terminal:
-
-```bash
-cd examples/docusaurus
-npm start
-```
-
-Open:
-
-```text
-http://127.0.0.1:3020/ask-ai
-```
-
-The Ask AI page lives in `examples/docusaurus/src/pages/ask-ai.tsx`. Copy it into your own site only if you want that starter UI.
-
-## UI
-
-The package does not ship a Docusaurus page component. That keeps the npm package small and avoids forcing a UI shape on every site.
-
-If you want a starter page, copy these files from the example:
-
-```text
-examples/docusaurus/src/pages/ask-ai.tsx
-examples/docusaurus/src/pages/ask-ai.module.css
-```
-
-Then change the page's `apiPath` to your deployed API route.
-
-## Notes
-
-The API runs stateless by default. Public deployments should add rate limiting before calling Gemini. Use your hosting provider, WAF, gateway, middleware, or the `checkAccess` option on the Fetch handler.
+The package does not ship a UI component. If you want a starter page, copy `ask-ai.tsx` and `ask-ai.module.css` from the example into your own project and update `apiPath` to your deployed route.
 
 ## Options Reference
 
@@ -282,7 +192,7 @@ npx gemini-search sync --source docs,/docs --source blog,/blog
 
 `--source` can be repeated and uses `<dir>,<basePathname>[,<section>]`. When `--source` is present, it takes precedence over `--docs-dir`.
 
-Sync writes `.gemini-search/manifest.json` under your project root to track uploaded content hashes. Delete that file if you need to force a full re-upload.
+Delete `.gemini-search/manifest.json` to force a full re-upload.
 
 ### Docusaurus Plugin Options
 
