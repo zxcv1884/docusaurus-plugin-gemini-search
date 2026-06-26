@@ -20,6 +20,7 @@ export type SyncOptions = {
   dryRun?: boolean;
   createStore?: boolean;
   client?: GeminiSyncClient;
+  embeddingModel?: string;
 };
 
 export type SyncSource = {
@@ -107,6 +108,7 @@ export async function syncGeminiSearch(options: SyncOptions = {}) {
     const store = await ai.fileSearchStores.create({
       config: {
         displayName: 'Docusaurus Gemini Search',
+        embeddingModel: options.embeddingModel || 'models/gemini-embedding-2',
       },
     });
     console.log(`Created Gemini File Search store: ${store.name}`);
@@ -221,7 +223,7 @@ async function walkMarkdownFiles(dir: string): Promise<string[]> {
   return files;
 }
 
-async function uploadDocument(ai: GeminiSyncClient, rootDir: string, storeName: string, doc: SyncDocument) {
+async function uploadDocument(ai: GeminiSyncClient, rootDir: string, storeName: string, doc: SyncDocument): Promise<any> {
   const uploadPath = await writeUploadFile(rootDir, doc);
   try {
     const operation = await ai.fileSearchStores.uploadToFileSearchStore({
@@ -240,7 +242,7 @@ async function uploadDocument(ai: GeminiSyncClient, rootDir: string, storeName: 
         ],
       },
     });
-    await waitForOperation(ai, operation);
+    return operation;
   } finally {
     await fs.rm(uploadPath, {force: true});
   }
@@ -261,6 +263,7 @@ async function uploadDocuments(
   const workerCount = Math.min(concurrency, docs.length);
   const failures: Array<{doc: SyncDocument; error: unknown}> = [];
   let nextIndex = 0;
+  const operations: Array<{doc: SyncDocument; operation: any}> = [];
 
   console.log(`Uploading ${docs.length} changed document(s) to ${storeName} with concurrency ${workerCount}.`);
 
@@ -271,11 +274,12 @@ async function uploadDocuments(
       const doc = docs[index];
 
       try {
-        console.log(`[${index + 1}/${docs.length}] ${doc.sourcePath}`);
-        await uploadDocument(ai, rootDir, storeName, doc);
+        console.log(`[${index + 1}/${docs.length}] Uploading ${doc.sourcePath}...`);
+        const operation = await uploadDocument(ai, rootDir, storeName, doc);
+        operations.push({doc, operation});
       } catch (error) {
         failures.push({doc, error});
-        console.error(`[${index + 1}/${docs.length}] Failed ${doc.sourcePath}: ${formatErrorMessage(error)}`);
+        console.error(`[${index + 1}/${docs.length}] Failed uploading ${doc.sourcePath}: ${formatErrorMessage(error)}`);
       }
     }
   }
@@ -284,6 +288,11 @@ async function uploadDocuments(
 
   if (failures.length) {
     throw new Error(`Failed to upload ${failures.length} document(s): ${failures.map((failure) => failure.doc.sourcePath).join(', ')}`);
+  }
+
+  if (operations.length) {
+    console.log(`Waiting for ${operations.length} document processing operation(s) to complete on Gemini...`);
+    await waitForOperations(ai, operations, workerCount);
   }
 }
 
@@ -299,6 +308,18 @@ function resolveSyncConcurrency(value: number | undefined) {
 
 function formatErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isActive(state?: string) {
+  return state === 'ACTIVE' || state === 'STATE_ACTIVE';
+}
+
+function isProcessing(state?: string) {
+  return state === 'PROCESSING' || state === 'STATE_PROCESSING';
+}
+
+function isFailed(state?: string) {
+  return state === 'FAILED' || state === 'STATE_FAILED';
 }
 
 async function buildIncrementalSyncPlan(
@@ -333,7 +354,7 @@ async function buildIncrementalSyncPlan(
   for (const [sourcePath, doc] of docsBySourcePath.entries()) {
     const existing = existingBySourcePath.get(sourcePath) || [];
     const activeSameHash = existing.find((document) => (
-      document.state === 'STATE_ACTIVE' && document.contentHash === doc.contentHash
+      isActive(document.state) && document.contentHash === doc.contentHash
     ));
 
     if (activeSameHash) {
@@ -352,11 +373,29 @@ async function buildIncrementalSyncPlan(
       continue;
     }
 
+    const processingSameHash = existing.find((document) => (
+      isProcessing(document.state) && document.contentHash === doc.contentHash
+    ));
+
+    if (processingSameHash) {
+      skipped.push(doc);
+      for (const document of existing) {
+        if (isFailed(document.state)) {
+          toDelete.push({
+            name: document.name,
+            sourcePath,
+            reason: 'failed',
+          });
+        }
+      }
+      continue;
+    }
+
     for (const document of existing) {
       toDelete.push({
         name: document.name,
         sourcePath,
-        reason: document.state === 'STATE_FAILED' ? 'failed' : 'changed-hash',
+        reason: isFailed(document.state) ? 'failed' : 'changed-hash',
       });
     }
     toUpload.push(doc);
@@ -500,23 +539,62 @@ async function writeUploadFile(rootDir: string, doc: SyncDocument) {
   return uploadPath;
 }
 
-async function waitForOperation(ai: GeminiSyncClient, operation: any) {
-  let current = operation;
+async function waitForOperations(ai: GeminiSyncClient, operations: Array<{doc: SyncDocument; operation: any}>, concurrency: number) {
   const startedAt = Date.now();
   const timeoutMs = 180_000;
+  const pollConcurrency = Math.max(1, Math.floor(concurrency));
+  let activeOperations = collectPendingOperations(operations);
 
-  while (!current.done) {
+  while (activeOperations.length > 0) {
     if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`Timed out waiting for Gemini operation ${operation?.name || ''}`);
+      throw new Error(`Timed out waiting for Gemini operations: ${activeOperations.map((o) => o.doc.sourcePath).join(', ')}`);
     }
 
     await new Promise((resolve) => setTimeout(resolve, 5000));
-    current = await ai.operations.get({operation: current});
-  }
 
-  if (current.error) {
-    throw new Error(`Gemini operation failed: ${JSON.stringify(current.error)}`);
+    const nextActiveOperations: Array<{doc: SyncDocument; operation: any}> = [];
+
+    for (let index = 0; index < activeOperations.length; index += pollConcurrency) {
+      const batch = activeOperations.slice(index, index + pollConcurrency);
+      const checked = await Promise.all(batch.map(async (item) => ({
+        doc: item.doc,
+        operation: await ai.operations.get({operation: item.operation}),
+      })));
+
+      for (const item of checked) {
+        if (isOperationDone(item.operation)) {
+          handleCompletedOperation(item.doc, item.operation);
+        } else {
+          nextActiveOperations.push(item);
+        }
+      }
+    }
+
+    activeOperations = nextActiveOperations;
   }
+}
+
+function collectPendingOperations(operations: Array<{doc: SyncDocument; operation: any}>) {
+  const pending: Array<{doc: SyncDocument; operation: any}> = [];
+  for (const item of operations) {
+    if (isOperationDone(item.operation)) {
+      handleCompletedOperation(item.doc, item.operation);
+    } else {
+      pending.push(item);
+    }
+  }
+  return pending;
+}
+
+function isOperationDone(operation: any) {
+  return Boolean(operation?.done);
+}
+
+function handleCompletedOperation(doc: SyncDocument, operation: any) {
+  if (operation.error) {
+    throw new Error(`Gemini operation failed for ${doc.sourcePath}: ${JSON.stringify(operation.error)}`);
+  }
+  console.log(`Document processed successfully: ${doc.sourcePath}`);
 }
 
 function buildIndexableMarkdown({

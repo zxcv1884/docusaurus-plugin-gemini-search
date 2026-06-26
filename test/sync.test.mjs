@@ -118,6 +118,7 @@ test('syncGeminiSearch skips unchanged documents using store metadata', async ()
 
   const uploads = [];
   const deletes = [];
+  let operationGets = 0;
   const storeDocuments = [{
     name: 'fileSearchStores/docs/documents/blog',
     state: 'STATE_ACTIVE',
@@ -159,6 +160,7 @@ test('syncGeminiSearch skips unchanged documents using store metadata', async ()
     },
     operations: {
       async get() {
+        operationGets += 1;
         return {done: true};
       },
     },
@@ -174,6 +176,7 @@ test('syncGeminiSearch skips unchanged documents using store metadata', async ()
 
   await syncGeminiSearch(options);
   assert.equal(uploads.length, 2);
+  assert.equal(operationGets, 0);
   assert.deepEqual(await fs.readdir(path.join(rootDir, '.gemini-search')), []);
 
   await syncGeminiSearch(options);
@@ -191,6 +194,71 @@ test('syncGeminiSearch skips unchanged documents using store metadata', async ()
   assert.equal(deletes.length, 2);
   assert.equal(deletes[1].sourcePath, 'docs/intro.md');
   assert.equal(storeDocuments.some((document) => document.name === 'fileSearchStores/docs/documents/blog'), true);
+});
+
+test('syncGeminiSearch keeps active stale documents while same-hash replacement is processing', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gemini-search-sync-'));
+  const docsDir = path.join(rootDir, 'docs');
+  await fs.mkdir(docsDir, {recursive: true});
+  await fs.writeFile(path.join(docsDir, 'setup.md'), '# Setup\nInstall with npm', 'utf8');
+
+  const [doc] = await collectDocs(rootDir, resolveSyncSources(rootDir, {}), 'https://docs.example.com');
+  const uploads = [];
+  const deletes = [];
+  const storeDocuments = [
+    {
+      name: 'fileSearchStores/docs/documents/active-old',
+      state: 'STATE_ACTIVE',
+      customMetadata: [
+        {key: 'sourcePath', stringValue: 'docs/setup.md'},
+        {key: 'contentHash', stringValue: 'old-hash'},
+      ],
+    },
+    {
+      name: 'fileSearchStores/docs/documents/processing-new',
+      state: 'STATE_PROCESSING',
+      customMetadata: [
+        {key: 'sourcePath', stringValue: 'docs/setup.md'},
+        {key: 'contentHash', stringValue: doc.contentHash},
+      ],
+    },
+  ];
+
+  const client = {
+    fileSearchStores: {
+      async create() {
+        return {name: 'fileSearchStores/docs'};
+      },
+      documents: {
+        async list() {
+          return storeDocuments;
+        },
+        async delete(input) {
+          deletes.push(input);
+        },
+      },
+      async uploadToFileSearchStore(input) {
+        uploads.push(input);
+        return {done: true};
+      },
+    },
+    operations: {
+      async get() {
+        throw new Error('completed uploads should not be polled');
+      },
+    },
+  };
+
+  await syncGeminiSearch({
+    rootDir,
+    apiKey: 'test-key',
+    storeName: 'fileSearchStores/docs',
+    siteUrl: 'https://docs.example.com',
+    client,
+  });
+
+  assert.equal(uploads.length, 0);
+  assert.deepEqual(deletes, []);
 });
 
 test('syncGeminiSearch uploads changed documents concurrently', async () => {
@@ -239,4 +307,53 @@ test('syncGeminiSearch uploads changed documents concurrently', async () => {
   });
 
   assert.equal(maxActiveUploads, 2);
+});
+
+test('syncGeminiSearch polls processing operations with bounded concurrency', async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gemini-search-sync-'));
+  const docsDir = path.join(rootDir, 'docs');
+  await fs.mkdir(docsDir, {recursive: true});
+  await fs.writeFile(path.join(docsDir, 'a.md'), '# A\nAlpha', 'utf8');
+  await fs.writeFile(path.join(docsDir, 'b.md'), '# B\nBeta', 'utf8');
+  await fs.writeFile(path.join(docsDir, 'c.md'), '# C\nGamma', 'utf8');
+
+  let activePolls = 0;
+  let maxActivePolls = 0;
+  let nextOperationId = 1;
+  const client = {
+    fileSearchStores: {
+      async create() {
+        return {name: 'fileSearchStores/docs'};
+      },
+      documents: {
+        async list() {
+          return [];
+        },
+        async delete() {},
+      },
+      async uploadToFileSearchStore(_input) {
+        return {done: false, name: `operations/${nextOperationId++}`};
+      },
+    },
+    operations: {
+      async get() {
+        activePolls += 1;
+        maxActivePolls = Math.max(maxActivePolls, activePolls);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activePolls -= 1;
+        return {done: true};
+      },
+    },
+  };
+
+  await syncGeminiSearch({
+    rootDir,
+    apiKey: 'test-key',
+    storeName: 'fileSearchStores/docs',
+    siteUrl: 'https://docs.example.com',
+    concurrency: 2,
+    client,
+  });
+
+  assert.equal(maxActivePolls, 2);
 });
