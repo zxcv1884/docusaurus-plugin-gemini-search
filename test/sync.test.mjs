@@ -23,6 +23,14 @@ test('buildDocUrl supports root and custom base pathnames', () => {
   assert.equal(buildDocUrl('https://docs.example.com/', 'intro.md', '/guides'), 'https://docs.example.com/guides/intro');
 });
 
+test('buildDocUrl prefers Docusaurus frontmatter slug when present', () => {
+  assert.equal(
+    buildDocUrl('', 'nested/overview.md', '/docs', '/embedded-vision/vizioncam-usb3/usb-camera-troubleshooting'),
+    '/docs/embedded-vision/vizioncam-usb3/usb-camera-troubleshooting',
+  );
+  assert.equal(buildDocUrl('https://docs.example.com', 'nested/overview.md', '/docs', 'custom-page'), 'https://docs.example.com/docs/custom-page');
+});
+
 test('resolveSyncSources uses docsDir shorthand by default', () => {
   const rootDir = path.join(os.tmpdir(), 'gemini-search-root');
   const [source] = resolveSyncSources(rootDir, {docsDir: 'content', basePathname: '/guides'});
@@ -60,6 +68,8 @@ test('collectDocs combines multiple sources with per-source URLs and sections', 
   await fs.mkdir(path.join(rootDir, 'docs'), {recursive: true});
   await fs.mkdir(path.join(rootDir, 'blog'), {recursive: true});
   await fs.writeFile(path.join(rootDir, 'docs', 'index.md'), '---\ntitle: Docs Home\ndescription: Start here\n---\n# Ignored\nWelcome', 'utf8');
+  await fs.mkdir(path.join(rootDir, 'docs', 'nested'), {recursive: true});
+  await fs.writeFile(path.join(rootDir, 'docs', 'nested', 'overview.md'), '---\ntitle: Nested Overview\nslug: /custom-overview\n---\n# Ignored\nCustom', 'utf8');
   await fs.writeFile(path.join(rootDir, 'blog', 'first-post.md'), '# First Post\nHello', 'utf8');
 
   const sources = resolveSyncSources(rootDir, {
@@ -70,7 +80,7 @@ test('collectDocs combines multiple sources with per-source URLs and sections', 
   });
   const docs = await collectDocs(rootDir, sources, 'https://docs.example.com');
 
-  assert.equal(docs.length, 2);
+  assert.equal(docs.length, 3);
   assert.deepEqual(
     docs.map((doc) => ({sourcePath: doc.sourcePath, title: doc.title, url: doc.url, section: doc.section})),
     [
@@ -84,6 +94,12 @@ test('collectDocs combines multiple sources with per-source URLs and sections', 
         sourcePath: 'docs/index.md',
         title: 'Docs Home',
         url: 'https://docs.example.com/',
+        section: 'docs',
+      },
+      {
+        sourcePath: 'docs/nested/overview.md',
+        title: 'Nested Overview',
+        url: 'https://docs.example.com/custom-overview',
         section: 'docs',
       },
     ],

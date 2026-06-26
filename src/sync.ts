@@ -179,7 +179,7 @@ export async function collectDocs(rootDir: string, sources: ResolvedSyncSource[]
       const sourcePath = path.relative(rootDir, absolutePath).split(path.sep).join('/');
       const frontMatter = parseFrontMatter(raw);
       const title = extractTitle(raw, absolutePath, frontMatter);
-      const url = buildDocUrl(siteUrl, path.relative(source.absoluteDir, absolutePath), source.basePathname);
+      const url = buildDocUrl(siteUrl, path.relative(source.absoluteDir, absolutePath), source.basePathname, frontMatter.slug);
       const indexableContent = buildIndexableMarkdown({
         content: stripFrontMatter(raw),
         description: frontMatter.description,
@@ -587,13 +587,15 @@ function parseFrontMatter(raw: string): Record<string, string> {
   return result;
 }
 
-export function buildDocUrl(siteUrl: string, relativePath: string, basePathname = '/docs') {
-  const withoutExt = relativePath.replace(/\.(md|mdx)$/i, '');
-  const withoutIndex = withoutExt.replace(/(^|\/)index$/i, '');
-  const slug = withoutIndex
-    .split(path.sep)
-    .join('/')
-    .replace(/^\/+|\/+$/g, '');
+export function buildDocUrl(siteUrl: string, relativePath: string, basePathname = '/docs', frontMatterSlug?: string) {
+  const slug = frontMatterSlug
+    ? frontMatterSlug.replace(/^\/+|\/+$/g, '')
+    : relativePath
+      .replace(/\.(md|mdx)$/i, '')
+      .replace(/(^|\/)index$/i, '')
+      .split(path.sep)
+      .join('/')
+      .replace(/^\/+|\/+$/g, '');
   const base = normalizeBasePathname(basePathname);
   const pathname = slug ? `${base === '/' ? '' : base}/${slug}` : base;
   return siteUrl ? `${siteUrl.replace(/\/$/, '')}${pathname}` : pathname;
